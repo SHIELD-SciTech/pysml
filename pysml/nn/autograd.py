@@ -436,3 +436,386 @@ class Transpose(Function):
         if grad_output is None:
             return (None,)
         return (grad_output.transpose(self.dim0, self.dim1),)
+
+
+
+class Conv2dFunction(Function):
+    def forward(self, x, weight, bias, stride, padding):
+        self.save_for_backward(Tensor(x), Tensor(weight))
+        self.stride = stride
+        self.padding = padding
+        self.has_bias = bias is not None
+        
+        # Get backend
+        np_backend, _ = _get_backend(x)
+        
+        # Apply padding
+        if padding[0] > 0 or padding[1] > 0:
+            x_padded = np_backend.pad(
+                x, 
+                ((0, 0), (0, 0), (padding[0], padding[0]), (padding[1], padding[1])),
+                mode='constant'
+            )
+        else:
+            x_padded = x
+        
+        batch_size, in_channels, in_h, in_w = x_padded.shape
+        out_channels, _, k_h, k_w = weight.shape
+        
+        # Calculate output dimensions
+        out_h = (in_h - k_h) // stride[0] + 1
+        out_w = (in_w - k_w) // stride[1] + 1
+        
+        # Initialize output
+        output = np_backend.zeros((batch_size, out_channels, out_h, out_w), dtype=x.dtype)
+        
+        # Perform convolution
+        for b in range(batch_size):
+            for oc in range(out_channels):
+                for i in range(out_h):
+                    for j in range(out_w):
+                        h_start = i * stride[0]
+                        w_start = j * stride[1]
+                        h_end = h_start + k_h
+                        w_end = w_start + k_w
+                        
+                        # Extract patch
+                        patch = x_padded[b, :, h_start:h_end, w_start:w_end]
+                        
+                        # Convolve
+                        output[b, oc, i, j] = np_backend.sum(patch * weight[oc])
+        
+        # Add bias if present
+        if bias is not None:
+            output += bias.reshape(1, -1, 1, 1)
+        
+        return output
+    
+    def backward(self, grad_output):
+        x, weight = self.saved_tensors
+        np_backend, _ = _get_backend(grad_output.data)
+        
+        # Apply padding to input for gradient computation
+        if self.padding[0] > 0 or self.padding[1] > 0:
+            x_padded = np_backend.pad(
+                x.data,
+                ((0, 0), (0, 0), (self.padding[0], self.padding[0]), (self.padding[1], self.padding[1])),
+                mode='constant'
+            )
+        else:
+            x_padded = x.data
+        
+        batch_size, in_channels, in_h, in_w = x_padded.shape
+        out_channels, _, k_h, k_w = weight.shape
+        _, _, out_h, out_w = grad_output.data.shape
+        
+        # Gradient w.r.t. input
+        grad_x_padded = np_backend.zeros_like(x_padded)
+        
+        # Gradient w.r.t. weight
+        grad_weight = np_backend.zeros_like(weight.data)
+        
+        # Gradient w.r.t. bias
+        if self.has_bias:
+            grad_bias = np_backend.sum(grad_output.data, axis=(0, 2, 3))
+        else:
+            grad_bias = None
+        
+        # Compute gradients
+        for b in range(batch_size):
+            for oc in range(out_channels):
+                for i in range(out_h):
+                    for j in range(out_w):
+                        h_start = i * self.stride[0]
+                        w_start = j * self.stride[1]
+                        h_end = h_start + k_h
+                        w_end = w_start + k_w
+                        
+                        # Gradient w.r.t. input
+                        grad_x_padded[b, :, h_start:h_end, w_start:w_end] += \
+                            weight.data[oc] * grad_output.data[b, oc, i, j]
+                        
+                        # Gradient w.r.t. weight
+                        patch = x_padded[b, :, h_start:h_end, w_start:w_end]
+                        grad_weight[oc] += patch * grad_output.data[b, oc, i, j]
+        
+        # Remove padding from gradient
+        if self.padding[0] > 0 or self.padding[1] > 0:
+            p_h, p_w = self.padding
+            grad_x = grad_x_padded[:, :, p_h:-p_h if p_h > 0 else None, p_w:-p_w if p_w > 0 else None]
+        else:
+            grad_x = grad_x_padded
+        
+        return Tensor(grad_x), Tensor(grad_weight), Tensor(grad_bias) if grad_bias is not None else None, None, None
+
+
+class Conv1dFunction(Function):
+    def forward(self, x, weight, bias, stride, padding):
+        self.save_for_backward(Tensor(x), Tensor(weight))
+        self.stride = stride
+        self.padding = padding
+        self.has_bias = bias is not None
+        
+        np_backend, _ = _get_backend(x)
+        
+        # Apply padding
+        if padding > 0:
+            x_padded = np_backend.pad(x, ((0, 0), (0, 0), (padding, padding)), mode='constant')
+        else:
+            x_padded = x
+        
+        batch_size, in_channels, length = x_padded.shape
+        out_channels, _, kernel_size = weight.shape
+        
+        out_length = (length - kernel_size) // stride + 1
+        output = np_backend.zeros((batch_size, out_channels, out_length), dtype=x.dtype)
+        
+        # Perform convolution
+        for b in range(batch_size):
+            for oc in range(out_channels):
+                for i in range(out_length):
+                    start = i * stride
+                    end = start + kernel_size
+                    patch = x_padded[b, :, start:end]
+                    output[b, oc, i] = np_backend.sum(patch * weight[oc])
+        
+        if bias is not None:
+            output += bias.reshape(1, -1, 1)
+        
+        return output
+    
+    def backward(self, grad_output):
+        x, weight = self.saved_tensors
+        np_backend, _ = _get_backend(grad_output.data)
+        
+        if self.padding > 0:
+            x_padded = np_backend.pad(x.data, ((0, 0), (0, 0), (self.padding, self.padding)), mode='constant')
+        else:
+            x_padded = x.data
+        
+        batch_size, in_channels, length = x_padded.shape
+        out_channels, _, kernel_size = weight.shape
+        _, _, out_length = grad_output.data.shape
+        
+        grad_x_padded = np_backend.zeros_like(x_padded)
+        grad_weight = np_backend.zeros_like(weight.data)
+        
+        if self.has_bias:
+            grad_bias = np_backend.sum(grad_output.data, axis=(0, 2))
+        else:
+            grad_bias = None
+        
+        for b in range(batch_size):
+            for oc in range(out_channels):
+                for i in range(out_length):
+                    start = i * self.stride
+                    end = start + kernel_size
+                    
+                    grad_x_padded[b, :, start:end] += weight.data[oc] * grad_output.data[b, oc, i]
+                    patch = x_padded[b, :, start:end]
+                    grad_weight[oc] += patch * grad_output.data[b, oc, i]
+        
+        if self.padding > 0:
+            grad_x = grad_x_padded[:, :, self.padding:-self.padding]
+        else:
+            grad_x = grad_x_padded
+        
+        return Tensor(grad_x), Tensor(grad_weight), Tensor(grad_bias) if grad_bias is not None else None, None, None
+
+
+class MaxPool2dFunction(Function):
+    def forward(self, x, kernel_size, stride, padding):
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        
+        np_backend, _ = _get_backend(x)
+        
+        # Apply padding
+        if padding[0] > 0 or padding[1] > 0:
+            x_padded = np_backend.pad(
+                x,
+                ((0, 0), (0, 0), (padding[0], padding[0]), (padding[1], padding[1])),
+                mode='constant',
+                constant_values=-np_backend.inf
+            )
+        else:
+            x_padded = x
+        
+        batch_size, channels, in_h, in_w = x_padded.shape
+        k_h, k_w = kernel_size
+        s_h, s_w = stride
+        
+        out_h = (in_h - k_h) // s_h + 1
+        out_w = (in_w - k_w) // s_w + 1
+        
+        output = np_backend.zeros((batch_size, channels, out_h, out_w), dtype=x.dtype)
+        self.max_indices = np_backend.zeros((batch_size, channels, out_h, out_w, 2), dtype=np_backend.int32)
+        
+        for b in range(batch_size):
+            for c in range(channels):
+                for i in range(out_h):
+                    for j in range(out_w):
+                        h_start = i * s_h
+                        w_start = j * s_w
+                        h_end = h_start + k_h
+                        w_end = w_start + k_w
+                        
+                        patch = x_padded[b, c, h_start:h_end, w_start:w_end]
+                        output[b, c, i, j] = np_backend.max(patch)
+                        
+                        # Store max index for backward
+                        max_idx = np_backend.unravel_index(np_backend.argmax(patch), patch.shape)
+                        self.max_indices[b, c, i, j] = [max_idx[0], max_idx[1]]
+        
+        self.input_shape = x.shape
+        self.save_for_backward(Tensor(x_padded))
+        
+        return output
+    
+    def backward(self, grad_output):
+        x_padded, = self.saved_tensors
+        np_backend, _ = _get_backend(grad_output.data)
+        
+        grad_x_padded = np_backend.zeros_like(x_padded.data)
+        batch_size, channels, out_h, out_w = grad_output.data.shape
+        s_h, s_w = self.stride
+        
+        for b in range(batch_size):
+            for c in range(channels):
+                for i in range(out_h):
+                    for j in range(out_w):
+                        h_start = i * s_h
+                        w_start = j * s_w
+                        
+                        max_i, max_j = self.max_indices[b, c, i, j]
+                        grad_x_padded[b, c, h_start + max_i, w_start + max_j] += grad_output.data[b, c, i, j]
+        
+        # Remove padding
+        if self.padding[0] > 0 or self.padding[1] > 0:
+            p_h, p_w = self.padding
+            grad_x = grad_x_padded[:, :, p_h:-p_h if p_h > 0 else None, p_w:-p_w if p_w > 0 else None]
+        else:
+            grad_x = grad_x_padded
+        
+        return Tensor(grad_x), None, None, None
+
+
+class AvgPool2dFunction(Function):
+    def forward(self, x, kernel_size, stride, padding):
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        self.input_shape = x.shape
+        
+        np_backend, _ = _get_backend(x)
+        
+        if padding[0] > 0 or padding[1] > 0:
+            x_padded = np_backend.pad(
+                x,
+                ((0, 0), (0, 0), (padding[0], padding[0]), (padding[1], padding[1])),
+                mode='constant'
+            )
+        else:
+            x_padded = x
+        
+        batch_size, channels, in_h, in_w = x_padded.shape
+        k_h, k_w = kernel_size
+        s_h, s_w = stride
+        
+        out_h = (in_h - k_h) // s_h + 1
+        out_w = (in_w - k_w) // s_w + 1
+        
+        output = np_backend.zeros((batch_size, channels, out_h, out_w), dtype=x.dtype)
+        
+        for b in range(batch_size):
+            for c in range(channels):
+                for i in range(out_h):
+                    for j in range(out_w):
+                        h_start = i * s_h
+                        w_start = j * s_w
+                        h_end = h_start + k_h
+                        w_end = w_start + k_w
+                        
+                        patch = x_padded[b, c, h_start:h_end, w_start:w_end]
+                        output[b, c, i, j] = np_backend.mean(patch)
+        
+        return output
+    
+    def backward(self, grad_output):
+        np_backend, _ = _get_backend(grad_output.data)
+        
+        # Create gradient with padding if needed
+        batch_size, channels, in_h, in_w = self.input_shape
+        
+        if self.padding[0] > 0 or self.padding[1] > 0:
+            p_h, p_w = self.padding
+            padded_h = in_h + 2 * p_h
+            padded_w = in_w + 2 * p_w
+            grad_x_padded = np_backend.zeros((batch_size, channels, padded_h, padded_w), dtype=grad_output.data.dtype)
+        else:
+            grad_x_padded = np_backend.zeros(self.input_shape, dtype=grad_output.data.dtype)
+        
+        k_h, k_w = self.kernel_size
+        s_h, s_w = self.stride
+        _, _, out_h, out_w = grad_output.data.shape
+        
+        # Distribute gradient evenly across the pooling window
+        scale = 1.0 / (k_h * k_w)
+        
+        for b in range(batch_size):
+            for c in range(channels):
+                for i in range(out_h):
+                    for j in range(out_w):
+                        h_start = i * s_h
+                        w_start = j * s_w
+                        h_end = h_start + k_h
+                        w_end = w_start + k_w
+                        
+                        # Distribute gradient evenly to all elements in the window
+                        grad_x_padded[b, c, h_start:h_end, w_start:w_end] += \
+                            grad_output.data[b, c, i, j] * scale
+        
+        # Remove padding if present
+        if self.padding[0] > 0 or self.padding[1] > 0:
+            p_h, p_w = self.padding
+            grad_x = grad_x_padded[:, :, p_h:-p_h if p_h > 0 else None, p_w:-p_w if p_w > 0 else None]
+        else:
+            grad_x = grad_x_padded
+        
+        return Tensor(grad_x), None, None, None
+    
+class Sigmoid(Function):
+    def forward(self, x):
+        np_backend, _ = _get_backend(x)
+        sigmoid_x = 1 / (1 + np_backend.exp(-x))
+        self.save_for_backward(Tensor(sigmoid_x))
+        return sigmoid_x
+    
+    def backward(self, grad_output):
+        if grad_output is None:
+            return None
+        sigmoid_x, = self.saved_tensors
+        # d/dx sigmoid(x) = sigmoid(x) * (1 - sigmoid(x))
+        grad = grad_output.data * sigmoid_x.data * (1 - sigmoid_x.data)
+        return Tensor(grad)
+
+
+class Tanh(Function):
+    def forward(self, x):
+        np_backend, _ = _get_backend(x)
+        tanh_x = np_backend.tanh(x)
+        self.save_for_backward(Tensor(tanh_x))
+        return tanh_x
+    
+    def backward(self, grad_output):
+        if grad_output is None:
+            return None
+        tanh_x, = self.saved_tensors
+        # d/dx tanh(x) = 1 - tanh(x)^2
+        grad = grad_output.data * (1 - tanh_x.data ** 2)
+        return Tensor(grad)
+
+
+
+    
