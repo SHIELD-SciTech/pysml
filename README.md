@@ -606,9 +606,9 @@ checkpoint = {
 | **Multi-Backend** | CPU/CUDA/XPU | CPU/CUDA | CPU/CUDA/TPU | CPU/CUDA/TPU |
 | **Intel GPU Support** | Native | Limited | Experimental | None |
 | **Autograd** | Full | Full | Full | Full |
-| **RNN/LSTM/GRU** | ✓ | ✓ | ✓ | ✓ |
-| **Mixed Precision** | ✓ | ✓ | ✓ | ✓ |
-| **Data Loading** | ✓ | ✓ | ✓ | ✗ |
+| **RNN/LSTM/GRU** | Yes | Yes | Yes | Yes |
+| **Mixed Precision** | Yes | Yes | Yes | Yes |
+| **Data Loading** | Yes | Yes | Yes | No |
 | **Model Zoo** | Growing | Extensive | Extensive | Growing |
 | **Distributed** | Planned | DDP/FSDP | Strategy | pmap |
 | **Size** | Lightweight | Large | Very Large | Medium |
@@ -846,32 +846,32 @@ python examples/amp_example.py
 ## Roadmap
 
 ### Version 0.3.0 (Current)
-- ✅ Complete autograd engine
-- ✅ Transformer architecture
-- ✅ AdamW optimizer
-- ✅ Multi-backend support (CPU/CUDA/XPU)
-- ✅ Broadcasting in backprop
-- ✅ Convolutional layers (Conv1d, Conv2d)
-- ✅ RNN/LSTM/GRU modules
-- ✅ Data loading utilities (DataLoader)
-- ✅ Serialization (save/load models)
-- ✅ Mixed precision training (AMP)
-- ✅ Gradient clipping
+- Complete autograd engine
+- Transformer architecture
+- AdamW optimizer
+- Multi-backend support (CPU/CUDA/XPU)
+- Broadcasting in backprop
+- Convolutional layers (Conv1d, Conv2d)
+- RNN/LSTM/GRU modules
+- Data loading utilities (DataLoader)
+- Serialization (save/load models)
+- Mixed precision training (AMP)
+- Gradient clipping
 
 ### Version 0.4.0 (In Progress)
-- 🔄 Learning rate schedulers
-- 🔄 Additional optimizers (RMSprop, Adagrad)
-- 🔄 Image augmentation transforms
-- 🔄 Attention variants (flash attention)
-- 🔄 Model quantization (INT8)
+- Learning rate schedulers
+- Additional optimizers (RMSprop, Adagrad)
+- Image augmentation transforms
+- Attention variants (flash attention)
+- Model quantization (INT8)
 
 ### Version 1.0.0 (Future)
-- 📋 Distributed training (DDP)
-- 📋 Model parallelism
-- 📋 Gradient accumulation
-- 📋 Complete model zoo
-- 📋 TorchScript-like compilation
-- 📋 ONNX export
+- Distributed training (DDP)
+- Model parallelism
+- Gradient accumulation
+- Complete model zoo
+- TorchScript-like compilation
+- ONNX export
 
 ---
 
@@ -940,15 +940,15 @@ If you use PySML in your research, please cite:
 ### Mixed Precision Training
 
 **When to use AMP:**
-- ✅ Training large models (Transformers, ResNets)
-- ✅ GPU training (CUDA/XPU with tensor cores)
-- ✅ Memory-constrained scenarios
-- ✅ Batch size optimization
+- Training large models (Transformers, ResNets)
+- GPU training (CUDA/XPU with tensor cores)
+- Memory-constrained scenarios
+- Batch size optimization
 
 **When NOT to use AMP:**
-- ❌ Small models where overhead dominates
-- ❌ CPU-only training (no performance gain)
-- ❌ Models with numerical instability issues
+- Small models where overhead dominates
+- CPU-only training (no performance gain)
+- Models with numerical instability issues
 
 **Best Practices:**
 ```python
@@ -1181,34 +1181,34 @@ scaler.load_state_dict(checkpoint['scaler'])
 
 ## Changelog
 
-### Version 0.3.0 (January 2025)
-- ✨ Added RNN, LSTM, GRU modules with bidirectional support
-- ✨ Implemented Automatic Mixed Precision (AMP) training
-- ✨ Added convolutional layers (Conv1d, Conv2d, pooling)
-- ✨ Implemented DataLoader with batching and shuffling
-- ✨ Added model serialization (save/load checkpoints)
-- ✨ Gradient clipping utilities (clip_grad_norm_, clip_grad_value_)
-- 🐛 Fixed broadcasting in backward pass
-- 🐛 Fixed XPU tensor indexing in embeddings
-- 🐛 Fixed gradient accumulation in optimizers
-- 📚 Comprehensive examples for all features
-- ⚡ Performance improvements in attention mechanism
+### Version 0.3.0 (October 2025)
+- Added RNN, LSTM, GRU modules with bidirectional support
+- Implemented Automatic Mixed Precision (AMP) training
+- Added convolutional layers (Conv1d, Conv2d, pooling)
+- Implemented DataLoader with batching and shuffling
+- Added model serialization (save/load checkpoints)
+- Gradient clipping utilities (clip_grad_norm_, clip_grad_value_)
+- Fixed broadcasting in backward pass
+- Fixed XPU tensor indexing in embeddings
+- Fixed gradient accumulation in optimizers
+- Comprehensive examples for all features
+- Performance improvements in attention mechanism
 
-### Version 0.2.0 (December 2024)
-- ✨ Complete autograd engine with computational graph
-- ✨ Transformer encoder with multi-head attention
-- ✨ AdamW optimizer with decoupled weight decay
-- ✨ Context managers for device switching
-- ✨ Broadcasting support in operations
-- 🐛 Fixed memory leaks in backward pass
-- 📚 Added training examples
+### Version 0.2.0 (October 2025)
+- Complete autograd engine with computational graph
+- Transformer encoder with multi-head attention
+- AdamW optimizer with decoupled weight decay
+- Context managers for device switching
+- Broadcasting support in operations
+- Fixed memory leaks in backward pass
+- Added training examples
 
-### Version 0.1.0 (November 2024)
-- 🎉 Initial release
-- ✨ Basic tensor operations
-- ✨ CPU/CUDA/XPU backend support
-- ✨ SGD and Adam optimizers
-- ✨ Linear layers and embeddings
+### Version 0.1.0 (September 2025)
+- Initial release
+- Basic tensor operations
+- CPU/CUDA/XPU backend support
+- SGD and Adam optimizers
+- Linear layers and embeddings
 
 ---
 
