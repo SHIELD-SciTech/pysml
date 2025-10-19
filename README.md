@@ -10,7 +10,7 @@
 
 ---
 
-## 🚀 What's New in v0.4.6
+## What's New in v0.4.6
 
 **Major Release - October 19, 2025**
 
@@ -44,13 +44,13 @@ PySML has been completely rewritten from the ground up with enterprise-scale dis
 
 ### Why PySML v0.4.6?
 
-- ✨ **Distributed Training**: Data parallel, pipeline parallel, and hybrid strategies out of the box
-- 🎯 **Multi-Device Support**: Train across multiple GPUs, Intel Arc GPUs, and CPUs simultaneously
-- 🔥 **Full Autograd Engine**: Complete automatic differentiation with optimized gradient computation
-- 🧠 **Rich Model Zoo**: Pre-configured Transformers, VAEs, GANs, and more
-- ⚡ **High Performance**: Native hardware acceleration on all supported platforms
-- 🛠️ **Production Ready**: Comprehensive training pipeline with checkpointing and monitoring
-- 📦 **Easy to Use**: Familiar PyTorch-like API for seamless adoption
+- **Distributed Training**: Data parallel, pipeline parallel, and hybrid strategies out of the box
+- **Multi-Device Support**: Train across multiple GPUs, Intel Arc GPUs, and CPUs simultaneously
+- **Full Autograd Engine**: Complete automatic differentiation with optimized gradient computation
+- **Rich Model Zoo**: Pre-configured Transformers, VAEs, GANs, and more
+- **High Performance**: Native hardware acceleration on all supported platforms
+- **Production Ready**: Comprehensive training pipeline with checkpointing and monitoring
+- **Easy to Use**: Familiar PyTorch-like API for seamless adoption
 
 ### Supported Hardware
 
@@ -917,4 +917,51 @@ For internal contributors:
 © 2025 S.H.I.E.L.D.  
 All Rights Reserved
 
-This software is proprietary and confidential.
+This software is proprietary and confidential. Unauthorized copying, distribution, or use is strictly prohibited.
+
+---
+
+## Authors & Acknowledgments
+
+**Primary Development:**
+- S.H.I.E.L.D. Research Division
+
+**Special Thanks:**
+- Intel for DPNP/DPCTL and oneAPI support
+- NVIDIA for CUDA ecosystem
+- NumPy/CuPy communities
+
+---
+
+## Contact
+
+**S.H.I.E.L.D.**  
+Research & Development Division  
+Strategic Homeland Intervention, Enforcement, and Logistics Division
+
+For internal inquiries: `research@shieldapi.org`
+
+---
+
+## Citation
+
+If you use PySML in your research, please cite:
+
+```bibtex
+@software{pysml2025,
+  title = {PySML: Python SHIELD Machine Learning Framework},
+  author = {S.H.I.E.L.D.},
+  year = {2025},
+  version = {0.4.6},
+  organization = {Strategic Homeland Intervention, Enforcement, and Logistics Division},
+  note = {Enterprise Deep Learning Framework with Distributed Training}
+}
+```
+
+---
+
+*Built with ❤️ by the S.H.I.E.L.D. Research Team*
+
+PySML represents years of dedication to making deep learning more accessible, flexible, and powerful. We believe that groundbreaking AI research shouldn't be limited by hardware constraints or framework lock-in. Whether you're training on a laptop CPU, a cutting-edge NVIDIA GPU, or Intel's Arc graphics cards, PySML provides the same elegant API and robust performance. Our mission is to empower researchers and engineers to focus on what matters most—pushing the boundaries of what's possible with machine learning. Thank you for being part of this journey with us.
+
+*Advancing AI through hardware-agnostic innovation and distributed training*
