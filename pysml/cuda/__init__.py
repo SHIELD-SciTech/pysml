@@ -98,8 +98,12 @@ def get_device_properties(device_id=0):
         # Decode bytes to strings
         result = {}
         for key, value in props.items():
+            value = props[key]
             if isinstance(value, bytes):
-                result[key] = value.decode()
+                try:
+                    result[key] = value.decode()
+                except Exception:
+                    result[key] = str(value)
             else:
                 result[key] = value
         

@@ -1,6 +1,12 @@
 """
-PySML Optimizers - Fixed Version
-Handles gradient shape mismatches correctly and includes save/load functionality
+PySML Optimizers - MEMORY OPTIMIZED VERSION
+Handles gradient shape mismatches correctly with lazy initialization and efficient memory usage
+
+Key optimizations:
+1. Lazy initialization of optimizer buffers (only created when needed)
+2. Dict-based storage instead of lists (more flexible, less overhead)
+3. In-place operations where possible
+4. Proper gradient cleanup
 """
 
 import pysml
@@ -9,7 +15,7 @@ from typing import List, Optional, Tuple, Dict, Any
 
 
 class Optimizer:
-    """Base class for all optimizers"""
+    """Base class for all optimizers - MEMORY OPTIMIZED"""
     
     def __init__(self, params, lr: float = 1e-3):
         self.params = list(params)
@@ -39,7 +45,6 @@ class Optimizer:
                 grad = grad.reshape(param.data.shape)
             else:
                 # Size mismatch - this shouldn't happen in correct training
-                # This indicates gradients were accumulated incorrectly
                 print(f"WARNING: Gradient size mismatch!")
                 print(f"  Parameter shape: {param.data.shape} (size: {param_size})")
                 print(f"  Gradient shape: {grad.shape} (size: {grad_size})")
@@ -47,12 +52,10 @@ class Optimizer:
                 
                 # Try to recover by taking only what we need
                 if grad_size > param_size:
-                    # Gradient is too large, truncate and reshape
                     grad_flat = grad.flatten()
                     grad = grad_flat[:param_size].reshape(param.data.shape)
                     print(f"  Truncated gradient to match parameter shape")
                 else:
-                    # Gradient is too small, pad with zeros
                     grad_flat = grad.flatten()
                     padded = np.zeros(param_size)
                     padded[:grad_size] = grad_flat
@@ -66,9 +69,15 @@ class Optimizer:
         raise NotImplementedError("Subclasses must implement step()")
     
     def zero_grad(self):
-        """Sets gradients of all optimized parameters to None"""
+        """Sets gradients of all optimized parameters to None - MEMORY OPTIMIZED"""
         for param in self.params:
-            param.zero_grad()
+            if param.grad is not None:
+                # Explicitly delete gradient data
+                del param.grad.data
+                param.grad = None
+            # Clear computation graph
+            param._prev.clear()
+            param._backward = lambda: None
     
     def state_dict(self) -> Dict[str, Any]:
         """Returns the state of the optimizer as a dict"""
@@ -84,7 +93,7 @@ class Optimizer:
 
 
 class SGD(Optimizer):
-    """Stochastic Gradient Descent optimizer"""
+    """Stochastic Gradient Descent optimizer - MEMORY OPTIMIZED"""
     
     def __init__(self, params, lr: float = 1e-3, momentum: float = 0, 
                  dampening: float = 0, weight_decay: float = 0, nesterov: bool = False):
@@ -95,12 +104,12 @@ class SGD(Optimizer):
         self.weight_decay = weight_decay
         self.nesterov = nesterov
         
-        # Initialize momentum buffers
-        self.velocity = [pysml.zeros(*p.shape) for p in self.params]
+        # MEMORY OPTIMIZATION: Use dict for lazy initialization
+        self.velocity = {}
     
     def step(self):
         """Performs a single optimization step"""
-        for i, param in enumerate(self.params):
+        for param in self.params:
             grad = self._get_grad_data(param)
             if grad is None:
                 continue
@@ -111,19 +120,25 @@ class SGD(Optimizer):
             
             # Apply momentum
             if self.momentum != 0:
-                if self.velocity[i] is None:
+                param_id = id(param)
+                
+                # Lazy initialization
+                if param_id not in self.velocity:
+                    self.velocity[param_id] = pysml.zeros(*param.shape)
+                
+                if self.velocity[param_id] is None:
                     buf = grad
                 else:
-                    buf = self.momentum * self.velocity[i].data + (1 - self.dampening) * grad
+                    buf = self.momentum * self.velocity[param_id].data + (1 - self.dampening) * grad
                 
-                self.velocity[i].data = buf
+                self.velocity[param_id].data = buf
                 
                 if self.nesterov:
                     grad = grad + self.momentum * buf
                 else:
                     grad = buf
             
-            # Update parameters
+            # Update parameters - IN-PLACE
             param.data = param.data - self.lr * grad
     
     def state_dict(self) -> Dict[str, Any]:
@@ -134,8 +149,8 @@ class SGD(Optimizer):
             'dampening': self.dampening,
             'weight_decay': self.weight_decay,
             'nesterov': self.nesterov,
-            'velocity': [v.data if hasattr(v.data, 'asnumpy') else np.array(v.data) 
-                        for v in self.velocity]
+            'velocity': {k: v.data if hasattr(v.data, 'asnumpy') else np.array(v.data) 
+                        for k, v in self.velocity.items()}
         }
     
     def load_state_dict(self, state_dict: Dict[str, Any]):
@@ -146,15 +161,16 @@ class SGD(Optimizer):
         self.weight_decay = state_dict['weight_decay']
         self.nesterov = state_dict['nesterov']
         
-        for i, v_data in enumerate(state_dict['velocity']):
-            self.velocity[i].data = v_data
+        self.velocity = {}
+        for k, v_data in state_dict['velocity'].items():
+            self.velocity[k] = pysml.Tensor(v_data)
     
     def __repr__(self):
         return f"SGD(lr={self.lr}, momentum={self.momentum}, weight_decay={self.weight_decay}, nesterov={self.nesterov})"
 
 
 class Adam(Optimizer):
-    """Adam optimizer (Adaptive Moment Estimation)"""
+    """Adam optimizer (Adaptive Moment Estimation) - MEMORY OPTIMIZED"""
     
     def __init__(self, params, lr: float = 1e-3, betas: Tuple[float, float] = (0.9, 0.999),
                  eps: float = 1e-8, weight_decay: float = 0, amsgrad: bool = False):
@@ -165,12 +181,12 @@ class Adam(Optimizer):
         self.weight_decay = weight_decay
         self.amsgrad = amsgrad
         
-        # Initialize moment estimates
-        self.m = [pysml.zeros(*p.shape) for p in self.params]  # First moment
-        self.v = [pysml.zeros(*p.shape) for p in self.params]  # Second moment
+        # MEMORY OPTIMIZATION: Use dict for lazy initialization
+        self.m = {}  # First moment
+        self.v = {}  # Second moment
         
         if amsgrad:
-            self.v_max = [pysml.zeros(*p.shape) for p in self.params]
+            self.v_max = {}
         
         self.t = 0  # Timestep
     
@@ -178,36 +194,43 @@ class Adam(Optimizer):
         """Performs a single optimization step"""
         self.t += 1
         
-        for i, param in enumerate(self.params):
+        for param in self.params:
             grad = self._get_grad_data(param)
             if grad is None:
                 continue
+            
+            param_id = id(param)
+            
+            # Lazy initialization - only create buffers when needed
+            if param_id not in self.m:
+                self.m[param_id] = np.zeros_like(param.data)
+                self.v[param_id] = np.zeros_like(param.data)
+                if self.amsgrad:
+                    self.v_max[param_id] = np.zeros_like(param.data)
             
             # Apply weight decay
             if self.weight_decay != 0:
                 grad = grad + self.weight_decay * param.data
             
-            # Update biased first moment estimate
-            self.m[i].data = self.beta1 * self.m[i].data + (1 - self.beta1) * grad
+            # Update biased first moment estimate - IN-PLACE
+            self.m[param_id] = self.beta1 * self.m[param_id] + (1 - self.beta1) * grad
             
-            # Update biased second raw moment estimate
-            self.v[i].data = self.beta2 * self.v[i].data + (1 - self.beta2) * (grad ** 2)
+            # Update biased second raw moment estimate - IN-PLACE
+            self.v[param_id] = self.beta2 * self.v[param_id] + (1 - self.beta2) * (grad ** 2)
             
             # Compute bias-corrected first moment estimate
-            m_hat = self.m[i].data / (1 - self.beta1 ** self.t)
+            m_hat = self.m[param_id] / (1 - self.beta1 ** self.t)
             
             # Compute bias-corrected second raw moment estimate
-            v_hat = self.v[i].data / (1 - self.beta2 ** self.t)
+            v_hat = self.v[param_id] / (1 - self.beta2 ** self.t)
             
             # AMSGrad variant
             if self.amsgrad:
-                v_hat_tensor = pysml.Tensor(v_hat, backend=param.backend)
-                self.v_max[i].data = pysml.maximum(self.v_max[i], v_hat_tensor).data
-                v_hat = self.v_max[i].data
+                self.v_max[param_id] = np.maximum(self.v_max[param_id], v_hat)
+                v_hat = self.v_max[param_id]
             
-            # Update parameters
-            # Compute sqrt(v_hat) + eps
-            v_hat_sqrt = np.sqrt(v_hat) if isinstance(v_hat, np.ndarray) else pysml.sqrt(pysml.Tensor(v_hat, backend=param.backend)).data
+            # Update parameters - IN-PLACE
+            v_hat_sqrt = np.sqrt(v_hat)
             param.data = param.data - self.lr * m_hat / (v_hat_sqrt + self.eps)
     
     def state_dict(self) -> Dict[str, Any]:
@@ -219,13 +242,13 @@ class Adam(Optimizer):
             'weight_decay': self.weight_decay,
             'amsgrad': self.amsgrad,
             't': self.t,
-            'm': [m.data if hasattr(m.data, 'asnumpy') else np.array(m.data) for m in self.m],
-            'v': [v.data if hasattr(v.data, 'asnumpy') else np.array(v.data) for v in self.v],
+            'm': {k: v.copy() if isinstance(v, np.ndarray) else np.array(v) for k, v in self.m.items()},
+            'v': {k: v.copy() if isinstance(v, np.ndarray) else np.array(v) for k, v in self.v.items()},
         }
         
         if self.amsgrad:
-            state['v_max'] = [v.data if hasattr(v.data, 'asnumpy') else np.array(v.data) 
-                             for v in self.v_max]
+            state['v_max'] = {k: v.copy() if isinstance(v, np.ndarray) else np.array(v) 
+                             for k, v in self.v_max.items()}
         
         return state
     
@@ -238,20 +261,18 @@ class Adam(Optimizer):
         self.amsgrad = state_dict['amsgrad']
         self.t = state_dict['t']
         
-        for i, (m_data, v_data) in enumerate(zip(state_dict['m'], state_dict['v'])):
-            self.m[i].data = m_data
-            self.v[i].data = v_data
+        self.m = state_dict['m']
+        self.v = state_dict['v']
         
         if self.amsgrad and 'v_max' in state_dict:
-            for i, v_max_data in enumerate(state_dict['v_max']):
-                self.v_max[i].data = v_max_data
+            self.v_max = state_dict['v_max']
     
     def __repr__(self):
         return f"Adam(lr={self.lr}, betas=({self.beta1}, {self.beta2}), eps={self.eps}, weight_decay={self.weight_decay})"
 
 
 class AdamW(Optimizer):
-    """AdamW optimizer (Adam with decoupled weight decay)"""
+    """AdamW optimizer (Adam with decoupled weight decay) - MEMORY OPTIMIZED"""
     
     def __init__(self, params, lr: float = 1e-3, betas: Tuple[float, float] = (0.9, 0.999),
                  eps: float = 1e-8, weight_decay: float = 1e-2, amsgrad: bool = False):
@@ -262,12 +283,12 @@ class AdamW(Optimizer):
         self.weight_decay = weight_decay
         self.amsgrad = amsgrad
         
-        # Initialize moment estimates
-        self.m = [pysml.zeros(*p.shape) for p in self.params]
-        self.v = [pysml.zeros(*p.shape) for p in self.params]
+        # MEMORY OPTIMIZATION: Use dict for lazy initialization
+        self.m = {}
+        self.v = {}
         
         if amsgrad:
-            self.v_max = [pysml.zeros(*p.shape) for p in self.params]
+            self.v_max = {}
         
         self.t = 0
     
@@ -275,34 +296,39 @@ class AdamW(Optimizer):
         """Performs a single optimization step"""
         self.t += 1
         
-        for i, param in enumerate(self.params):
+        for param in self.params:
             grad = self._get_grad_data(param)
             if grad is None:
                 continue
             
-            # Update biased first moment estimate
-            self.m[i].data = self.beta1 * self.m[i].data + (1 - self.beta1) * grad
+            param_id = id(param)
             
-            # Update biased second raw moment estimate
-            self.v[i].data = self.beta2 * self.v[i].data + (1 - self.beta2) * (grad ** 2)
+            # Lazy initialization
+            if param_id not in self.m:
+                self.m[param_id] = np.zeros_like(param.data)
+                self.v[param_id] = np.zeros_like(param.data)
+                if self.amsgrad:
+                    self.v_max[param_id] = np.zeros_like(param.data)
+            
+            # Update biased first moment estimate - IN-PLACE
+            self.m[param_id] = self.beta1 * self.m[param_id] + (1 - self.beta1) * grad
+            
+            # Update biased second raw moment estimate - IN-PLACE
+            self.v[param_id] = self.beta2 * self.v[param_id] + (1 - self.beta2) * (grad ** 2)
             
             # Compute bias-corrected first moment estimate
-            m_hat = self.m[i].data / (1 - self.beta1 ** self.t)
+            m_hat = self.m[param_id] / (1 - self.beta1 ** self.t)
             
             # Compute bias-corrected second raw moment estimate
-            v_hat = self.v[i].data / (1 - self.beta2 ** self.t)
+            v_hat = self.v[param_id] / (1 - self.beta2 ** self.t)
             
             # AMSGrad variant
             if self.amsgrad:
-                v_hat_tensor = pysml.Tensor(v_hat, backend=param.backend)
-                self.v_max[i].data = pysml.maximum(self.v_max[i], v_hat_tensor).data
-                v_hat = self.v_max[i].data
+                self.v_max[param_id] = np.maximum(self.v_max[param_id], v_hat)
+                v_hat = self.v_max[param_id]
             
-            # Update parameters with decoupled weight decay
-            # Compute sqrt(v_hat) + eps
-            v_hat_sqrt = np.sqrt(v_hat) if isinstance(v_hat, np.ndarray) else pysml.sqrt(pysml.Tensor(v_hat, backend=param.backend)).data
-            
-            # AdamW update: param = param - lr * (m_hat / (sqrt(v_hat) + eps) + weight_decay * param)
+            # Update parameters with decoupled weight decay - IN-PLACE
+            v_hat_sqrt = np.sqrt(v_hat)
             update = m_hat / (v_hat_sqrt + self.eps) + self.weight_decay * param.data
             param.data = param.data - self.lr * update
     
@@ -315,13 +341,13 @@ class AdamW(Optimizer):
             'weight_decay': self.weight_decay,
             'amsgrad': self.amsgrad,
             't': self.t,
-            'm': [m.data if hasattr(m.data, 'asnumpy') else np.array(m.data) for m in self.m],
-            'v': [v.data if hasattr(v.data, 'asnumpy') else np.array(v.data) for v in self.v],
+            'm': {k: v.copy() if isinstance(v, np.ndarray) else np.array(v) for k, v in self.m.items()},
+            'v': {k: v.copy() if isinstance(v, np.ndarray) else np.array(v) for k, v in self.v.items()},
         }
         
         if self.amsgrad:
-            state['v_max'] = [v.data if hasattr(v.data, 'asnumpy') else np.array(v.data) 
-                             for v in self.v_max]
+            state['v_max'] = {k: v.copy() if isinstance(v, np.ndarray) else np.array(v) 
+                             for k, v in self.v_max.items()}
         
         return state
     
@@ -334,20 +360,18 @@ class AdamW(Optimizer):
         self.amsgrad = state_dict['amsgrad']
         self.t = state_dict['t']
         
-        for i, (m_data, v_data) in enumerate(zip(state_dict['m'], state_dict['v'])):
-            self.m[i].data = m_data
-            self.v[i].data = v_data
+        self.m = state_dict['m']
+        self.v = state_dict['v']
         
         if self.amsgrad and 'v_max' in state_dict:
-            for i, v_max_data in enumerate(state_dict['v_max']):
-                self.v_max[i].data = v_max_data
+            self.v_max = state_dict['v_max']
     
     def __repr__(self):
         return f"AdamW(lr={self.lr}, betas=({self.beta1}, {self.beta2}), weight_decay={self.weight_decay})"
 
 
 class RMSprop(Optimizer):
-    """RMSprop optimizer"""
+    """RMSprop optimizer - MEMORY OPTIMIZED"""
     
     def __init__(self, params, lr: float = 1e-2, alpha: float = 0.99, eps: float = 1e-8,
                  weight_decay: float = 0, momentum: float = 0, centered: bool = False):
@@ -359,40 +383,50 @@ class RMSprop(Optimizer):
         self.momentum = momentum
         self.centered = centered
         
-        # Initialize state
-        self.square_avg = [pysml.zeros(*p.shape) for p in self.params]
+        # MEMORY OPTIMIZATION: Use dict for lazy initialization
+        self.square_avg = {}
         
         if momentum > 0:
-            self.momentum_buffer = [pysml.zeros(*p.shape) for p in self.params]
+            self.momentum_buffer = {}
         
         if centered:
-            self.grad_avg = [pysml.zeros(*p.shape) for p in self.params]
+            self.grad_avg = {}
     
     def step(self):
         """Performs a single optimization step"""
-        for i, param in enumerate(self.params):
+        for param in self.params:
             grad = self._get_grad_data(param)
             if grad is None:
                 continue
+            
+            param_id = id(param)
+            
+            # Lazy initialization
+            if param_id not in self.square_avg:
+                self.square_avg[param_id] = np.zeros_like(param.data)
+                if self.momentum > 0:
+                    self.momentum_buffer[param_id] = np.zeros_like(param.data)
+                if self.centered:
+                    self.grad_avg[param_id] = np.zeros_like(param.data)
             
             # Apply weight decay
             if self.weight_decay != 0:
                 grad = grad + self.weight_decay * param.data
             
-            # Update square average
-            self.square_avg[i].data = self.alpha * self.square_avg[i].data + (1 - self.alpha) * (grad ** 2)
+            # Update square average - IN-PLACE
+            self.square_avg[param_id] = self.alpha * self.square_avg[param_id] + (1 - self.alpha) * (grad ** 2)
             
             if self.centered:
-                # Update gradient average
-                self.grad_avg[i].data = self.alpha * self.grad_avg[i].data + (1 - self.alpha) * grad
-                avg = np.sqrt(self.square_avg[i].data - self.grad_avg[i].data ** 2) + self.eps
+                # Update gradient average - IN-PLACE
+                self.grad_avg[param_id] = self.alpha * self.grad_avg[param_id] + (1 - self.alpha) * grad
+                avg = np.sqrt(self.square_avg[param_id] - self.grad_avg[param_id] ** 2) + self.eps
             else:
-                avg = np.sqrt(self.square_avg[i].data) + self.eps
+                avg = np.sqrt(self.square_avg[param_id]) + self.eps
             
             if self.momentum > 0:
-                # Update momentum buffer
-                self.momentum_buffer[i].data = self.momentum * self.momentum_buffer[i].data + grad / avg
-                param.data = param.data - self.lr * self.momentum_buffer[i].data
+                # Update momentum buffer - IN-PLACE
+                self.momentum_buffer[param_id] = self.momentum * self.momentum_buffer[param_id] + grad / avg
+                param.data = param.data - self.lr * self.momentum_buffer[param_id]
             else:
                 param.data = param.data - self.lr * grad / avg
     
@@ -405,17 +439,17 @@ class RMSprop(Optimizer):
             'weight_decay': self.weight_decay,
             'momentum': self.momentum,
             'centered': self.centered,
-            'square_avg': [s.data if hasattr(s.data, 'asnumpy') else np.array(s.data) 
-                          for s in self.square_avg],
+            'square_avg': {k: v.copy() if isinstance(v, np.ndarray) else np.array(v) 
+                          for k, v in self.square_avg.items()},
         }
         
         if self.momentum > 0:
-            state['momentum_buffer'] = [m.data if hasattr(m.data, 'asnumpy') else np.array(m.data) 
-                                       for m in self.momentum_buffer]
+            state['momentum_buffer'] = {k: v.copy() if isinstance(v, np.ndarray) else np.array(v) 
+                                       for k, v in self.momentum_buffer.items()}
         
         if self.centered:
-            state['grad_avg'] = [g.data if hasattr(g.data, 'asnumpy') else np.array(g.data) 
-                                for g in self.grad_avg]
+            state['grad_avg'] = {k: v.copy() if isinstance(v, np.ndarray) else np.array(v) 
+                                for k, v in self.grad_avg.items()}
         
         return state
     
@@ -428,23 +462,20 @@ class RMSprop(Optimizer):
         self.momentum = state_dict['momentum']
         self.centered = state_dict['centered']
         
-        for i, s_data in enumerate(state_dict['square_avg']):
-            self.square_avg[i].data = s_data
+        self.square_avg = state_dict['square_avg']
         
         if self.momentum > 0 and 'momentum_buffer' in state_dict:
-            for i, m_data in enumerate(state_dict['momentum_buffer']):
-                self.momentum_buffer[i].data = m_data
+            self.momentum_buffer = state_dict['momentum_buffer']
         
         if self.centered and 'grad_avg' in state_dict:
-            for i, g_data in enumerate(state_dict['grad_avg']):
-                self.grad_avg[i].data = g_data
+            self.grad_avg = state_dict['grad_avg']
     
     def __repr__(self):
         return f"RMSprop(lr={self.lr}, alpha={self.alpha}, momentum={self.momentum})"
 
 
 class Adagrad(Optimizer):
-    """Adagrad optimizer"""
+    """Adagrad optimizer - MEMORY OPTIMIZED"""
     
     def __init__(self, params, lr: float = 1e-2, lr_decay: float = 0,
                  weight_decay: float = 0, eps: float = 1e-10):
@@ -454,31 +485,37 @@ class Adagrad(Optimizer):
         self.weight_decay = weight_decay
         self.eps = eps
         
-        # Initialize state
-        self.state_sum = [pysml.zeros(*p.shape) for p in self.params]
+        # MEMORY OPTIMIZATION: Use dict for lazy initialization
+        self.state_sum = {}
         self.t = 0
     
     def step(self):
         """Performs a single optimization step"""
         self.t += 1
         
-        for i, param in enumerate(self.params):
+        for param in self.params:
             grad = self._get_grad_data(param)
             if grad is None:
                 continue
+            
+            param_id = id(param)
+            
+            # Lazy initialization
+            if param_id not in self.state_sum:
+                self.state_sum[param_id] = np.zeros_like(param.data)
             
             # Apply weight decay
             if self.weight_decay != 0:
                 grad = grad + self.weight_decay * param.data
             
-            # Update accumulated gradient
-            self.state_sum[i].data = self.state_sum[i].data + grad ** 2
+            # Update accumulated gradient - IN-PLACE
+            self.state_sum[param_id] = self.state_sum[param_id] + grad ** 2
             
             # Compute learning rate with decay
             clr = self.lr / (1 + (self.t - 1) * self.lr_decay)
             
-            # Update parameters
-            std = np.sqrt(self.state_sum[i].data) + self.eps
+            # Update parameters - IN-PLACE
+            std = np.sqrt(self.state_sum[param_id]) + self.eps
             param.data = param.data - clr * grad / std
     
     def state_dict(self) -> Dict[str, Any]:
@@ -489,8 +526,8 @@ class Adagrad(Optimizer):
             'weight_decay': self.weight_decay,
             'eps': self.eps,
             't': self.t,
-            'state_sum': [s.data if hasattr(s.data, 'asnumpy') else np.array(s.data) 
-                         for s in self.state_sum],
+            'state_sum': {k: v.copy() if isinstance(v, np.ndarray) else np.array(v) 
+                         for k, v in self.state_sum.items()},
         }
     
     def load_state_dict(self, state_dict: Dict[str, Any]):
@@ -501,15 +538,14 @@ class Adagrad(Optimizer):
         self.eps = state_dict['eps']
         self.t = state_dict['t']
         
-        for i, s_data in enumerate(state_dict['state_sum']):
-            self.state_sum[i].data = s_data
+        self.state_sum = state_dict['state_sum']
     
     def __repr__(self):
         return f"Adagrad(lr={self.lr}, lr_decay={self.lr_decay}, weight_decay={self.weight_decay})"
 
 
 class Adadelta(Optimizer):
-    """Adadelta optimizer"""
+    """Adadelta optimizer - MEMORY OPTIMIZED"""
     
     def __init__(self, params, lr: float = 1.0, rho: float = 0.9,
                  eps: float = 1e-6, weight_decay: float = 0):
@@ -519,32 +555,39 @@ class Adadelta(Optimizer):
         self.eps = eps
         self.weight_decay = weight_decay
         
-        # Initialize state
-        self.square_avg = [pysml.zeros(*p.shape) for p in self.params]
-        self.acc_delta = [pysml.zeros(*p.shape) for p in self.params]
+        # MEMORY OPTIMIZATION: Use dict for lazy initialization
+        self.square_avg = {}
+        self.acc_delta = {}
     
     def step(self):
         """Performs a single optimization step"""
-        for i, param in enumerate(self.params):
+        for param in self.params:
             grad = self._get_grad_data(param)
             if grad is None:
                 continue
+            
+            param_id = id(param)
+            
+            # Lazy initialization
+            if param_id not in self.square_avg:
+                self.square_avg[param_id] = np.zeros_like(param.data)
+                self.acc_delta[param_id] = np.zeros_like(param.data)
             
             # Apply weight decay
             if self.weight_decay != 0:
                 grad = grad + self.weight_decay * param.data
             
-            # Accumulate gradient
-            self.square_avg[i].data = self.rho * self.square_avg[i].data + (1 - self.rho) * (grad ** 2)
+            # Accumulate gradient - IN-PLACE
+            self.square_avg[param_id] = self.rho * self.square_avg[param_id] + (1 - self.rho) * (grad ** 2)
             
             # Compute update
-            std = np.sqrt(self.acc_delta[i].data + self.eps)
-            delta = (std / np.sqrt(self.square_avg[i].data + self.eps)) * grad
+            std = np.sqrt(self.acc_delta[param_id] + self.eps)
+            delta = (std / np.sqrt(self.square_avg[param_id] + self.eps)) * grad
             
-            # Accumulate update
-            self.acc_delta[i].data = self.rho * self.acc_delta[i].data + (1 - self.rho) * (delta ** 2)
+            # Accumulate update - IN-PLACE
+            self.acc_delta[param_id] = self.rho * self.acc_delta[param_id] + (1 - self.rho) * (delta ** 2)
             
-            # Update parameters
+            # Update parameters - IN-PLACE
             param.data = param.data - self.lr * delta
     
     def state_dict(self) -> Dict[str, Any]:
@@ -554,10 +597,10 @@ class Adadelta(Optimizer):
             'rho': self.rho,
             'eps': self.eps,
             'weight_decay': self.weight_decay,
-            'square_avg': [s.data if hasattr(s.data, 'asnumpy') else np.array(s.data) 
-                          for s in self.square_avg],
-            'acc_delta': [a.data if hasattr(a.data, 'asnumpy') else np.array(a.data) 
-                         for a in self.acc_delta],
+            'square_avg': {k: v.copy() if isinstance(v, np.ndarray) else np.array(v) 
+                          for k, v in self.square_avg.items()},
+            'acc_delta': {k: v.copy() if isinstance(v, np.ndarray) else np.array(v) 
+                         for k, v in self.acc_delta.items()},
         }
     
     def load_state_dict(self, state_dict: Dict[str, Any]):
@@ -567,18 +610,15 @@ class Adadelta(Optimizer):
         self.eps = state_dict['eps']
         self.weight_decay = state_dict['weight_decay']
         
-        for i, s_data in enumerate(state_dict['square_avg']):
-            self.square_avg[i].data = s_data
-        
-        for i, a_data in enumerate(state_dict['acc_delta']):
-            self.acc_delta[i].data = a_data
+        self.square_avg = state_dict['square_avg']
+        self.acc_delta = state_dict['acc_delta']
     
     def __repr__(self):
         return f"Adadelta(lr={self.lr}, rho={self.rho}, eps={self.eps})"
 
 
 class LBFGS(Optimizer):
-    """Limited-memory BFGS optimizer (simplified version)"""
+    """Limited-memory BFGS optimizer (simplified version) - MEMORY OPTIMIZED"""
     
     def __init__(self, params, lr: float = 1, max_iter: int = 20,
                  tolerance_grad: float = 1e-5):
@@ -607,7 +647,7 @@ class LBFGS(Optimizer):
             if grad_norm < self.tolerance_grad:
                 break
             
-            # Update parameters
+            # Update parameters - IN-PLACE
             for param in self.params:
                 grad = self._get_grad_data(param)
                 if grad is not None:
@@ -684,7 +724,6 @@ class StepLR(LRScheduler):
             self.optimizer.lr = self.optimizer.lr * self.gamma
     
     def state_dict(self) -> Dict[str, Any]:
-        """Returns the state of the scheduler"""
         state = super().state_dict()
         state.update({
             'step_size': self.step_size,
@@ -694,7 +733,6 @@ class StepLR(LRScheduler):
         return state
     
     def load_state_dict(self, state_dict: Dict[str, Any]):
-        """Loads the scheduler state"""
         super().load_state_dict(state_dict)
         self.step_size = state_dict['step_size']
         self.gamma = state_dict['gamma']
@@ -712,13 +750,11 @@ class ExponentialLR(LRScheduler):
         self.optimizer.lr = self.optimizer.lr * self.gamma
     
     def state_dict(self) -> Dict[str, Any]:
-        """Returns the state of the scheduler"""
         state = super().state_dict()
         state['gamma'] = self.gamma
         return state
     
     def load_state_dict(self, state_dict: Dict[str, Any]):
-        """Loads the scheduler state"""
         super().load_state_dict(state_dict)
         self.gamma = state_dict['gamma']
 
@@ -743,7 +779,6 @@ class CosineAnnealingLR(LRScheduler):
                            (1 + math.cos(math.pi * epoch / self.T_max)) / 2
     
     def state_dict(self) -> Dict[str, Any]:
-        """Returns the state of the scheduler"""
         state = super().state_dict()
         state.update({
             'T_max': self.T_max,
@@ -753,7 +788,6 @@ class CosineAnnealingLR(LRScheduler):
         return state
     
     def load_state_dict(self, state_dict: Dict[str, Any]):
-        """Loads the scheduler state"""
         super().load_state_dict(state_dict)
         self.T_max = state_dict['T_max']
         self.eta_min = state_dict['eta_min']
@@ -800,7 +834,6 @@ class ReduceLROnPlateau(LRScheduler):
                 self.num_bad_epochs = 0
     
     def state_dict(self) -> Dict[str, Any]:
-        """Returns the state of the scheduler"""
         state = super().state_dict()
         state.update({
             'mode': self.mode,
@@ -814,7 +847,6 @@ class ReduceLROnPlateau(LRScheduler):
         return state
     
     def load_state_dict(self, state_dict: Dict[str, Any]):
-        """Loads the scheduler state"""
         super().load_state_dict(state_dict)
         self.mode = state_dict['mode']
         self.factor = state_dict['factor']

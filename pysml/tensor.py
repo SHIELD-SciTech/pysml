@@ -143,43 +143,32 @@ class Tensor:
         return engine.to_device(self, device)
     
     def zero_grad(self, set_to_none=True):
-        """
-        Zero out gradients and clear computation graph
-        
-        Args:
-            set_to_none: If True, set grad to None (better for memory). 
-                        If False, zero out existing gradient array.
-        """
         if set_to_none:
-            self.grad = None
+            if self.grad is not None:
+                del self.grad.data
+                self.grad = None
         else:
             if self.grad is not None:
-                # Zero out in-place to avoid allocation
                 self.grad.data.fill(0)
         
-        # CRITICAL: Clear computation graph to free memory
         self._prev.clear()
         self._backward = lambda: None
-    
-    def backward(self, grad=None, retain_graph=False):
-        """
-        Compute gradients via backpropagation using topological sort
         
-        Args:
-            grad: Gradient from upstream (defaults to ones for scalar)
-            retain_graph: If False (default), free computation graph after backward pass
-        """
+        if hasattr(self, 'data') and hasattr(self.data, '__del__'):
+            pass  # Let GC handle it naturally
+    
+
+    def backward(self, grad=None, retain_graph=False):
         if not self.requires_grad:
             return
         
-        # Initialize gradient
         if grad is None:
             if self.size == 1:
                 grad = Tensor(self.backend.ones_like(self.data), backend=self.backend)
             else:
                 raise RuntimeError("Gradient must be specified for non-scalar tensors")
         
-        # Build topological order of computation graph
+        # Build topological order
         topo = []
         visited = set()
         
@@ -192,23 +181,24 @@ class Tensor:
         
         build_topo(self)
         
-        # Initialize gradient for this tensor
+        # Initialize gradient
         self.grad = grad
         
-        # Propagate gradients in reverse topological order
         for node in reversed(topo):
             if node.grad is not None:
                 node._backward()
                 
-                # CRITICAL FIX: Clear computation graph after backward to free memory
                 if not retain_graph:
                     node._prev.clear()
                     node._backward = lambda: None
-                    # Keep grad but clear the graph
+                    if node is not self:
+                        node.grad = None  # FREE MEMORY
         
-        # Clear visited set to free memory
+        # Clean up
         visited.clear()
+        topo.clear()
         del topo
+        del visited
     
     def detach(self):
         """Return a new tensor detached from the computation graph"""

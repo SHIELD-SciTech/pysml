@@ -127,7 +127,7 @@ class DataParallelModel:
         # Average gradients (simulates AllReduce in production DDP)
         for param in self.base_model.parameters():
             if param.grad is not None:
-                param.grad.data = param.grad.data / self.num_devices
+                param.grad.data /= self.num_device
         
         # Return average loss
         return sum(losses) / len(losses)

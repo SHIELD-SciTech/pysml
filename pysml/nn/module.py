@@ -117,6 +117,24 @@ class Module:
             elif name in self._modules:
                 self._modules[name].load_state_dict(value)
 
+    def free_memory(self):
+        """
+        Free all intermediate activations and gradients
+        Call this after backward pass when you don't need the computation graph
+        """
+        # Free parameter gradients
+        for param in self.parameters():
+            if param.grad is not None:
+                del param.grad.data
+                param.grad = None
+            param._prev.clear()
+            param._backward = lambda: None
+        
+        # Recursively free submodules
+        for module in self._modules.values():
+            if isinstance(module, Module):
+                module.free_memory()
+
 
 class Sequential(Module):
     """
