@@ -868,69 +868,48 @@ import numpy as np
 from ..tensor import Tensor
 
 
-def embedding(input: Tensor, weight: Tensor, padding_idx: int = None) -> Tensor:
+def embedding(input: Tensor, weight: Tensor) -> Tensor:
     """
-    Look up embeddings from embedding matrix with PROPER gradient accumulation.
+    Embedding lookup
     
     Args:
-        input: Tensor containing indices
-        weight: Embedding matrix of shape (num_embeddings, embedding_dim)
-        padding_idx: If specified, entries at this index won't contribute to gradient
+        input: Indices tensor of shape (batch_size, seq_len)
+        weight: Embedding weight matrix of shape (vocab_size, embedding_dim)
     
     Returns:
-        Embedded tensor
+        Embedded tensor of shape (batch_size, seq_len, embedding_dim)
     """
-    # Get data
-    indices = input.data
+    import pysml
+    
+    # Get the data and backend
+    indices = input.data if isinstance(input, Tensor) else input
+    weight_data = weight.data if isinstance(weight, Tensor) else weight
+    backend = weight.backend if isinstance(weight, Tensor) else pysml.get_backend()
+    
+    # Convert indices to numpy first
     if hasattr(indices, 'asnumpy'):
-        indices = indices.asnumpy()
+        indices_np = indices.asnumpy()
+    elif hasattr(indices, 'get'):
+        indices_np = indices.get()
+    else:
+        indices_np = np.array(indices)
     
-    indices = indices.astype(np.int32)
+    indices_np = indices_np.astype(np.int32)
     
-    weight_data = weight.data
-    if hasattr(weight_data, 'asnumpy'):
-        weight_data = weight_data.asnumpy()
+    # Convert indices to the same backend as weight
+    if hasattr(backend, 'array'):
+        indices_backend = backend.array(indices_np, dtype=backend.int32)
+    else:
+        indices_backend = indices_np
     
-    # Perform embedding lookup
-    embedded = weight_data[indices]
+    # Perform embedding lookup using the backend
+    embedded = weight_data[indices_backend]
     
-    out = Tensor(embedded, backend=input.backend, device=input.device, 
-                 requires_grad=weight.requires_grad)
-    
-    # CRITICAL FIX: Set up backward pass for gradient accumulation
-    if weight.requires_grad:
-        out._prev = {weight}
-        out._op = 'embedding'
-        
-        def _backward():
-            # Initialize gradient if needed
-            if weight.grad is None:
-                weight.grad = Tensor(np.zeros_like(weight_data), backend=weight.backend)
-            
-            # Get gradient with respect to output
-            grad_output = out.grad.data
-            if hasattr(grad_output, 'asnumpy'):
-                grad_output = grad_output.asnumpy()
-            
-            # Get current weight gradient
-            weight_grad = weight.grad.data
-            if hasattr(weight_grad, 'asnumpy'):
-                weight_grad = weight_grad.asnumpy()
-            
-            # Flatten indices and gradients for accumulation
-            flat_indices = indices.flatten()
-            flat_grad = grad_output.reshape(-1, weight_data.shape[-1])
-            
-            # CRITICAL: Use np.add.at to accumulate gradients at each index
-            # This properly handles the case where the same index appears multiple times
-            np.add.at(weight_grad, flat_indices, flat_grad)
-            
-            # Update weight gradient
-            weight.grad.data = weight_grad if not hasattr(weight.grad.data, 'shape') else weight_grad
-        
-        out._backward = _backward
-    
-    return out
+    return Tensor(
+        embedded, 
+        backend=backend,
+        requires_grad=weight.requires_grad if isinstance(weight, Tensor) else False
+    )
 
 
 def interpolate(input: Tensor, size=None, scale_factor=None, mode='nearest'):

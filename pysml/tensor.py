@@ -1,6 +1,6 @@
 """
-PySML Tensor Class with Full Autograd Support
-Enhanced tensor implementation with complete gradient computation
+PySML Tensor Class with Full Autograd Support - MEMORY OPTIMIZED
+Enhanced tensor implementation with complete gradient computation and aggressive memory management
 """
 
 from typing import Optional, Union, Tuple, List, Set
@@ -50,8 +50,8 @@ class Tensor:
         self.grad = None
         self.grad_fn = None
         
-        # For autograd graph - use list instead of set
-        self._prev: List['Tensor'] = []
+        # For autograd graph - use set for efficient lookups
+        self._prev: Set['Tensor'] = set()
         self._op: str = ''
         self._backward = lambda: None
     
@@ -142,16 +142,32 @@ class Tensor:
         from . import engine
         return engine.to_device(self, device)
     
-    def zero_grad(self):
-        """Zero out gradients"""
-        self.grad = None
+    def zero_grad(self, set_to_none=True):
+        """
+        Zero out gradients and clear computation graph
+        
+        Args:
+            set_to_none: If True, set grad to None (better for memory). 
+                        If False, zero out existing gradient array.
+        """
+        if set_to_none:
+            self.grad = None
+        else:
+            if self.grad is not None:
+                # Zero out in-place to avoid allocation
+                self.grad.data.fill(0)
+        
+        # CRITICAL: Clear computation graph to free memory
+        self._prev.clear()
+        self._backward = lambda: None
     
-    def backward(self, grad=None):
+    def backward(self, grad=None, retain_graph=False):
         """
         Compute gradients via backpropagation using topological sort
         
         Args:
             grad: Gradient from upstream (defaults to ones for scalar)
+            retain_graph: If False (default), free computation graph after backward pass
         """
         if not self.requires_grad:
             return
@@ -183,6 +199,16 @@ class Tensor:
         for node in reversed(topo):
             if node.grad is not None:
                 node._backward()
+                
+                # CRITICAL FIX: Clear computation graph after backward to free memory
+                if not retain_graph:
+                    node._prev.clear()
+                    node._backward = lambda: None
+                    # Keep grad but clear the graph
+        
+        # Clear visited set to free memory
+        visited.clear()
+        del topo
     
     def detach(self):
         """Return a new tensor detached from the computation graph"""
@@ -406,3 +432,4 @@ class Tensor:
     def clip(self, min_val=None, max_val=None):
         from . import engine
         return engine.clip(self, min_val, max_val)
+

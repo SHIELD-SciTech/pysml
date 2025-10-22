@@ -1,11 +1,11 @@
 """
 PySML Optimizers - Fixed Version
-Handles gradient shape mismatches correctly
+Handles gradient shape mismatches correctly and includes save/load functionality
 """
 
 import pysml
 import numpy as np
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Any
 
 
 class Optimizer:
@@ -70,13 +70,17 @@ class Optimizer:
         for param in self.params:
             param.zero_grad()
     
-    def state_dict(self):
+    def state_dict(self) -> Dict[str, Any]:
         """Returns the state of the optimizer as a dict"""
         raise NotImplementedError("Subclasses should implement state_dict()")
     
-    def load_state_dict(self, state_dict):
+    def load_state_dict(self, state_dict: Dict[str, Any]):
         """Loads the optimizer state"""
         raise NotImplementedError("Subclasses should implement load_state_dict()")
+    
+    def get_last_lr(self) -> float:
+        """Get current learning rate"""
+        return self.lr
 
 
 class SGD(Optimizer):
@@ -121,6 +125,29 @@ class SGD(Optimizer):
             
             # Update parameters
             param.data = param.data - self.lr * grad
+    
+    def state_dict(self) -> Dict[str, Any]:
+        """Returns the state of the optimizer"""
+        return {
+            'lr': self.lr,
+            'momentum': self.momentum,
+            'dampening': self.dampening,
+            'weight_decay': self.weight_decay,
+            'nesterov': self.nesterov,
+            'velocity': [v.data if hasattr(v.data, 'asnumpy') else np.array(v.data) 
+                        for v in self.velocity]
+        }
+    
+    def load_state_dict(self, state_dict: Dict[str, Any]):
+        """Loads the optimizer state"""
+        self.lr = state_dict['lr']
+        self.momentum = state_dict['momentum']
+        self.dampening = state_dict['dampening']
+        self.weight_decay = state_dict['weight_decay']
+        self.nesterov = state_dict['nesterov']
+        
+        for i, v_data in enumerate(state_dict['velocity']):
+            self.velocity[i].data = v_data
     
     def __repr__(self):
         return f"SGD(lr={self.lr}, momentum={self.momentum}, weight_decay={self.weight_decay}, nesterov={self.nesterov})"
@@ -183,6 +210,42 @@ class Adam(Optimizer):
             v_hat_sqrt = np.sqrt(v_hat) if isinstance(v_hat, np.ndarray) else pysml.sqrt(pysml.Tensor(v_hat, backend=param.backend)).data
             param.data = param.data - self.lr * m_hat / (v_hat_sqrt + self.eps)
     
+    def state_dict(self) -> Dict[str, Any]:
+        """Returns the state of the optimizer"""
+        state = {
+            'lr': self.lr,
+            'betas': (self.beta1, self.beta2),
+            'eps': self.eps,
+            'weight_decay': self.weight_decay,
+            'amsgrad': self.amsgrad,
+            't': self.t,
+            'm': [m.data if hasattr(m.data, 'asnumpy') else np.array(m.data) for m in self.m],
+            'v': [v.data if hasattr(v.data, 'asnumpy') else np.array(v.data) for v in self.v],
+        }
+        
+        if self.amsgrad:
+            state['v_max'] = [v.data if hasattr(v.data, 'asnumpy') else np.array(v.data) 
+                             for v in self.v_max]
+        
+        return state
+    
+    def load_state_dict(self, state_dict: Dict[str, Any]):
+        """Loads the optimizer state"""
+        self.lr = state_dict['lr']
+        self.beta1, self.beta2 = state_dict['betas']
+        self.eps = state_dict['eps']
+        self.weight_decay = state_dict['weight_decay']
+        self.amsgrad = state_dict['amsgrad']
+        self.t = state_dict['t']
+        
+        for i, (m_data, v_data) in enumerate(zip(state_dict['m'], state_dict['v'])):
+            self.m[i].data = m_data
+            self.v[i].data = v_data
+        
+        if self.amsgrad and 'v_max' in state_dict:
+            for i, v_max_data in enumerate(state_dict['v_max']):
+                self.v_max[i].data = v_max_data
+    
     def __repr__(self):
         return f"Adam(lr={self.lr}, betas=({self.beta1}, {self.beta2}), eps={self.eps}, weight_decay={self.weight_decay})"
 
@@ -243,6 +306,42 @@ class AdamW(Optimizer):
             update = m_hat / (v_hat_sqrt + self.eps) + self.weight_decay * param.data
             param.data = param.data - self.lr * update
     
+    def state_dict(self) -> Dict[str, Any]:
+        """Returns the state of the optimizer"""
+        state = {
+            'lr': self.lr,
+            'betas': (self.beta1, self.beta2),
+            'eps': self.eps,
+            'weight_decay': self.weight_decay,
+            'amsgrad': self.amsgrad,
+            't': self.t,
+            'm': [m.data if hasattr(m.data, 'asnumpy') else np.array(m.data) for m in self.m],
+            'v': [v.data if hasattr(v.data, 'asnumpy') else np.array(v.data) for v in self.v],
+        }
+        
+        if self.amsgrad:
+            state['v_max'] = [v.data if hasattr(v.data, 'asnumpy') else np.array(v.data) 
+                             for v in self.v_max]
+        
+        return state
+    
+    def load_state_dict(self, state_dict: Dict[str, Any]):
+        """Loads the optimizer state"""
+        self.lr = state_dict['lr']
+        self.beta1, self.beta2 = state_dict['betas']
+        self.eps = state_dict['eps']
+        self.weight_decay = state_dict['weight_decay']
+        self.amsgrad = state_dict['amsgrad']
+        self.t = state_dict['t']
+        
+        for i, (m_data, v_data) in enumerate(zip(state_dict['m'], state_dict['v'])):
+            self.m[i].data = m_data
+            self.v[i].data = v_data
+        
+        if self.amsgrad and 'v_max' in state_dict:
+            for i, v_max_data in enumerate(state_dict['v_max']):
+                self.v_max[i].data = v_max_data
+    
     def __repr__(self):
         return f"AdamW(lr={self.lr}, betas=({self.beta1}, {self.beta2}), weight_decay={self.weight_decay})"
 
@@ -297,6 +396,49 @@ class RMSprop(Optimizer):
             else:
                 param.data = param.data - self.lr * grad / avg
     
+    def state_dict(self) -> Dict[str, Any]:
+        """Returns the state of the optimizer"""
+        state = {
+            'lr': self.lr,
+            'alpha': self.alpha,
+            'eps': self.eps,
+            'weight_decay': self.weight_decay,
+            'momentum': self.momentum,
+            'centered': self.centered,
+            'square_avg': [s.data if hasattr(s.data, 'asnumpy') else np.array(s.data) 
+                          for s in self.square_avg],
+        }
+        
+        if self.momentum > 0:
+            state['momentum_buffer'] = [m.data if hasattr(m.data, 'asnumpy') else np.array(m.data) 
+                                       for m in self.momentum_buffer]
+        
+        if self.centered:
+            state['grad_avg'] = [g.data if hasattr(g.data, 'asnumpy') else np.array(g.data) 
+                                for g in self.grad_avg]
+        
+        return state
+    
+    def load_state_dict(self, state_dict: Dict[str, Any]):
+        """Loads the optimizer state"""
+        self.lr = state_dict['lr']
+        self.alpha = state_dict['alpha']
+        self.eps = state_dict['eps']
+        self.weight_decay = state_dict['weight_decay']
+        self.momentum = state_dict['momentum']
+        self.centered = state_dict['centered']
+        
+        for i, s_data in enumerate(state_dict['square_avg']):
+            self.square_avg[i].data = s_data
+        
+        if self.momentum > 0 and 'momentum_buffer' in state_dict:
+            for i, m_data in enumerate(state_dict['momentum_buffer']):
+                self.momentum_buffer[i].data = m_data
+        
+        if self.centered and 'grad_avg' in state_dict:
+            for i, g_data in enumerate(state_dict['grad_avg']):
+                self.grad_avg[i].data = g_data
+    
     def __repr__(self):
         return f"RMSprop(lr={self.lr}, alpha={self.alpha}, momentum={self.momentum})"
 
@@ -338,6 +480,29 @@ class Adagrad(Optimizer):
             # Update parameters
             std = np.sqrt(self.state_sum[i].data) + self.eps
             param.data = param.data - clr * grad / std
+    
+    def state_dict(self) -> Dict[str, Any]:
+        """Returns the state of the optimizer"""
+        return {
+            'lr': self.lr,
+            'lr_decay': self.lr_decay,
+            'weight_decay': self.weight_decay,
+            'eps': self.eps,
+            't': self.t,
+            'state_sum': [s.data if hasattr(s.data, 'asnumpy') else np.array(s.data) 
+                         for s in self.state_sum],
+        }
+    
+    def load_state_dict(self, state_dict: Dict[str, Any]):
+        """Loads the optimizer state"""
+        self.lr = state_dict['lr']
+        self.lr_decay = state_dict['lr_decay']
+        self.weight_decay = state_dict['weight_decay']
+        self.eps = state_dict['eps']
+        self.t = state_dict['t']
+        
+        for i, s_data in enumerate(state_dict['state_sum']):
+            self.state_sum[i].data = s_data
     
     def __repr__(self):
         return f"Adagrad(lr={self.lr}, lr_decay={self.lr_decay}, weight_decay={self.weight_decay})"
@@ -382,6 +547,32 @@ class Adadelta(Optimizer):
             # Update parameters
             param.data = param.data - self.lr * delta
     
+    def state_dict(self) -> Dict[str, Any]:
+        """Returns the state of the optimizer"""
+        return {
+            'lr': self.lr,
+            'rho': self.rho,
+            'eps': self.eps,
+            'weight_decay': self.weight_decay,
+            'square_avg': [s.data if hasattr(s.data, 'asnumpy') else np.array(s.data) 
+                          for s in self.square_avg],
+            'acc_delta': [a.data if hasattr(a.data, 'asnumpy') else np.array(a.data) 
+                         for a in self.acc_delta],
+        }
+    
+    def load_state_dict(self, state_dict: Dict[str, Any]):
+        """Loads the optimizer state"""
+        self.lr = state_dict['lr']
+        self.rho = state_dict['rho']
+        self.eps = state_dict['eps']
+        self.weight_decay = state_dict['weight_decay']
+        
+        for i, s_data in enumerate(state_dict['square_avg']):
+            self.square_avg[i].data = s_data
+        
+        for i, a_data in enumerate(state_dict['acc_delta']):
+            self.acc_delta[i].data = a_data
+    
     def __repr__(self):
         return f"Adadelta(lr={self.lr}, rho={self.rho}, eps={self.eps})"
 
@@ -424,6 +615,20 @@ class LBFGS(Optimizer):
         
         return loss
     
+    def state_dict(self) -> Dict[str, Any]:
+        """Returns the state of the optimizer"""
+        return {
+            'lr': self.lr,
+            'max_iter': self.max_iter,
+            'tolerance_grad': self.tolerance_grad,
+        }
+    
+    def load_state_dict(self, state_dict: Dict[str, Any]):
+        """Loads the optimizer state"""
+        self.lr = state_dict['lr']
+        self.max_iter = state_dict['max_iter']
+        self.tolerance_grad = state_dict['tolerance_grad']
+    
     def __repr__(self):
         return f"LBFGS(lr={self.lr}, max_iter={self.max_iter})"
 
@@ -444,6 +649,20 @@ class LRScheduler:
     def get_lr(self):
         """Get current learning rate"""
         return self.optimizer.lr
+    
+    def get_last_lr(self):
+        """Get current learning rate (alias for PyTorch compatibility)"""
+        return self.get_lr()
+    
+    def state_dict(self) -> Dict[str, Any]:
+        """Returns the state of the scheduler"""
+        return {
+            'base_lr': self.base_lr,
+        }
+    
+    def load_state_dict(self, state_dict: Dict[str, Any]):
+        """Loads the scheduler state"""
+        self.base_lr = state_dict['base_lr']
 
 
 class StepLR(LRScheduler):
@@ -463,6 +682,23 @@ class StepLR(LRScheduler):
         
         if epoch % self.step_size == 0:
             self.optimizer.lr = self.optimizer.lr * self.gamma
+    
+    def state_dict(self) -> Dict[str, Any]:
+        """Returns the state of the scheduler"""
+        state = super().state_dict()
+        state.update({
+            'step_size': self.step_size,
+            'gamma': self.gamma,
+            'last_epoch': self.last_epoch,
+        })
+        return state
+    
+    def load_state_dict(self, state_dict: Dict[str, Any]):
+        """Loads the scheduler state"""
+        super().load_state_dict(state_dict)
+        self.step_size = state_dict['step_size']
+        self.gamma = state_dict['gamma']
+        self.last_epoch = state_dict['last_epoch']
 
 
 class ExponentialLR(LRScheduler):
@@ -474,6 +710,17 @@ class ExponentialLR(LRScheduler):
     
     def step(self, epoch=None):
         self.optimizer.lr = self.optimizer.lr * self.gamma
+    
+    def state_dict(self) -> Dict[str, Any]:
+        """Returns the state of the scheduler"""
+        state = super().state_dict()
+        state['gamma'] = self.gamma
+        return state
+    
+    def load_state_dict(self, state_dict: Dict[str, Any]):
+        """Loads the scheduler state"""
+        super().load_state_dict(state_dict)
+        self.gamma = state_dict['gamma']
 
 
 class CosineAnnealingLR(LRScheduler):
@@ -494,6 +741,23 @@ class CosineAnnealingLR(LRScheduler):
         import math
         self.optimizer.lr = self.eta_min + (self.base_lr - self.eta_min) * \
                            (1 + math.cos(math.pi * epoch / self.T_max)) / 2
+    
+    def state_dict(self) -> Dict[str, Any]:
+        """Returns the state of the scheduler"""
+        state = super().state_dict()
+        state.update({
+            'T_max': self.T_max,
+            'eta_min': self.eta_min,
+            'last_epoch': self.last_epoch,
+        })
+        return state
+    
+    def load_state_dict(self, state_dict: Dict[str, Any]):
+        """Loads the scheduler state"""
+        super().load_state_dict(state_dict)
+        self.T_max = state_dict['T_max']
+        self.eta_min = state_dict['eta_min']
+        self.last_epoch = state_dict['last_epoch']
 
 
 class ReduceLROnPlateau(LRScheduler):
@@ -534,6 +798,31 @@ class ReduceLROnPlateau(LRScheduler):
                 new_lr = max(self.optimizer.lr * self.factor, self.min_lr)
                 self.optimizer.lr = new_lr
                 self.num_bad_epochs = 0
+    
+    def state_dict(self) -> Dict[str, Any]:
+        """Returns the state of the scheduler"""
+        state = super().state_dict()
+        state.update({
+            'mode': self.mode,
+            'factor': self.factor,
+            'patience': self.patience,
+            'threshold': self.threshold,
+            'min_lr': self.min_lr,
+            'best': self.best,
+            'num_bad_epochs': self.num_bad_epochs,
+        })
+        return state
+    
+    def load_state_dict(self, state_dict: Dict[str, Any]):
+        """Loads the scheduler state"""
+        super().load_state_dict(state_dict)
+        self.mode = state_dict['mode']
+        self.factor = state_dict['factor']
+        self.patience = state_dict['patience']
+        self.threshold = state_dict['threshold']
+        self.min_lr = state_dict['min_lr']
+        self.best = state_dict['best']
+        self.num_bad_epochs = state_dict['num_bad_epochs']
 
 
 # Convenience function

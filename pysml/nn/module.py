@@ -8,60 +8,18 @@ from ..tensor import Tensor
 
 
 class Module:
-    """
-    Base class for all neural network modules
-    
-    Your models should subclass this class.
-    
-    Modules can contain other Modules, allowing to nest them in
-    a tree structure. You can assign the submodules as regular attributes.
-    
-    Example:
-        >>> class Model(Module):
-        ...     def __init__(self):
-        ...         super().__init__()
-        ...         self.linear1 = Linear(10, 20)
-        ...         self.linear2 = Linear(20, 10)
-        ...
-        ...     def forward(self, x):
-        ...         x = self.linear1(x)
-        ...         x = relu(x)
-        ...         x = self.linear2(x)
-        ...         return x
-    """
-    
     def __init__(self):
-        """Initialize the module"""
         self._training = True
         self._modules = {}
         self._parameters = {}
     
     def forward(self, *args, **kwargs):
-        """
-        Defines the computation performed at every call.
-        Should be overridden by all subclasses.
-        """
         raise NotImplementedError("Subclasses must implement forward()")
     
     def __call__(self, *args, **kwargs):
-        """
-        Call the forward method.
-        This allows modules to be called like functions.
-        """
         return self.forward(*args, **kwargs)
     
     def train(self, mode: bool = True):
-        """
-        Set the module in training mode.
-        
-        This affects certain modules like Dropout and BatchNorm.
-        
-        Args:
-            mode: Whether to set training mode (True) or evaluation mode (False)
-        
-        Returns:
-            self
-        """
         self._training = mode
         # Recursively set training mode for all submodules
         for module in self._modules.values():
@@ -70,28 +28,13 @@ class Module:
         return self
     
     def eval(self):
-        """
-        Set the module in evaluation mode.
-        
-        This is equivalent to calling train(False).
-        
-        Returns:
-            self
-        """
         return self.train(False)
     
     @property
     def training(self) -> bool:
-        """Whether the module is in training mode"""
         return self._training
     
     def parameters(self) -> List[Tensor]:
-        """
-        Return a list of all parameters in the module and its submodules.
-        
-        Returns:
-            List of all parameters
-        """
         params = []
         
         # Add direct parameters
@@ -107,16 +50,6 @@ class Module:
         return params
     
     def named_parameters(self, prefix: str = '') -> Iterator[tuple]:
-        """
-        Return an iterator over module parameters, yielding both the
-        name of the parameter as well as the parameter itself.
-        
-        Args:
-            prefix: Prefix to prepend to all parameter names
-        
-        Yields:
-            (string, Tensor): Tuple of parameter name and parameter
-        """
         for name, param in self._parameters.items():
             if param is not None:
                 full_name = f"{prefix}.{name}" if prefix else name
@@ -128,22 +61,10 @@ class Module:
                 yield from module.named_parameters(submodule_prefix)
     
     def zero_grad(self):
-        """
-        Set gradients of all parameters to None.
-        """
         for param in self.parameters():
             param.zero_grad()
     
     def to(self, device: str):
-        """
-        Move all parameters and buffers to the specified device.
-        
-        Args:
-            device: Device to move to ('cpu', 'xpu', 'cuda')
-        
-        Returns:
-            self
-        """
         from .. import engine
         
         # Move direct parameters
@@ -159,9 +80,6 @@ class Module:
         return self
     
     def __setattr__(self, name: str, value):
-        """
-        Override attribute setting to track modules and parameters.
-        """
         if isinstance(value, Module):
             self._modules[name] = value
         elif isinstance(value, Tensor) and hasattr(value, 'requires_grad') and value.requires_grad:
@@ -171,7 +89,6 @@ class Module:
         object.__setattr__(self, name, value)
     
     def __repr__(self):
-        """String representation of the module"""
         lines = [self.__class__.__name__ + '(']
         
         for name, module in self._modules.items():
@@ -181,6 +98,24 @@ class Module:
         
         lines.append(')')
         return '\n'.join(lines)
+    
+    def state_dict(self):
+        state = {}
+        for name, param in self._parameters.items():
+            state[name] = param.data
+        
+        # Recursively get child module states
+        for name, module in self._modules.items():
+            state[name] = module.state_dict()
+        
+        return state
+
+    def load_state_dict(self, state_dict):
+        for name, value in state_dict.items():
+            if name in self._parameters:
+                self._parameters[name].data = value
+            elif name in self._modules:
+                self._modules[name].load_state_dict(value)
 
 
 class Sequential(Module):
