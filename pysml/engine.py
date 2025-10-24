@@ -1,12 +1,6 @@
 """
-PySML Engine - MEMORY OPTIMIZED VERSION
-Complete gradient computation with aggressive memory management
-
-Key optimizations:
-1. Closures capture only data arrays, not full tensors
-2. Immediate graph cleanup after backward pass
-3. Efficient broadcasting without unnecessary copies
-4. Proper garbage collection of intermediate values
+PySML Engine - Enhanced Operations with Full Automatic Differentiation
+Complete gradient computation for all operations
 """
 
 from typing import Optional, Union, List, Tuple
@@ -116,7 +110,7 @@ def _tensor_backend(a, b, priority_list=["pysml.cpu.backend", "pysml.xpu.backend
    return a, b, backend
 
 
-# ===== Creation Operations =====
+# ===== Creation Operations (keep existing) =====
 
 def zeros(*shape, dtype=None, device: Optional[str] = None, requires_grad: bool = False) -> Tensor:
     device = device or _current_device
@@ -139,10 +133,10 @@ def randn(*shape, dtype=None, device: Optional[str] = None, requires_grad: bool 
     data = backend.random.randn(*shape).astype(dtype)
     return Tensor(data, backend=backend, device=device, requires_grad=requires_grad)
 
-# ===== Arithmetic Operations with Full Autograd - MEMORY OPTIMIZED =====
+# ===== Arithmetic Operations with Full Autograd =====
 
 def add(a: Union[Tensor, float], b: Union[Tensor, float]) -> Tensor:
-    """Element-wise addition with full autograd support - MEMORY OPTIMIZED"""
+    """Element-wise addition with full autograd support - OPTIMIZED"""
     a = _ensure_tensor(a)
     b = _ensure_tensor(b)
     
@@ -151,21 +145,20 @@ def add(a: Union[Tensor, float], b: Union[Tensor, float]) -> Tensor:
                 requires_grad=a.requires_grad or b.requires_grad)
     
     if out.requires_grad:
-        # CRITICAL: Only store what we need - NO full tensor references
+        out._prev = {a, b} if a.requires_grad and b.requires_grad else ({a} if a.requires_grad else {b})
+        out._op = 'add'
+        
+        # OPTIMIZATION: Extract all needed info BEFORE creating closure
         a_requires_grad = a.requires_grad
         b_requires_grad = b.requires_grad
         a_shape = a.shape
         b_shape = b.shape
         out_shape = out.shape
         
-        # Store parent references for graph traversal only
-        out._prev = {a, b} if a_requires_grad and b_requires_grad else ({a} if a_requires_grad else {b})
-        out._op = 'add'
-        
         def _backward():
             if a_requires_grad:
                 grad_a = out.grad.data
-                # Handle broadcasting efficiently
+                # Handle broadcasting
                 if a_shape != out_shape:
                     ndims_added = len(out_shape) - len(a_shape)
                     for i in range(ndims_added):
@@ -200,7 +193,7 @@ def add(a: Union[Tensor, float], b: Union[Tensor, float]) -> Tensor:
 
 
 def subtract(a: Union[Tensor, float], b: Union[Tensor, float]) -> Tensor:
-    """Element-wise subtraction - MEMORY OPTIMIZED"""
+    """Element-wise subtraction - OPTIMIZED"""
     a = _ensure_tensor(a)
     b = _ensure_tensor(b)
     
@@ -209,15 +202,15 @@ def subtract(a: Union[Tensor, float], b: Union[Tensor, float]) -> Tensor:
                 requires_grad=a.requires_grad or b.requires_grad)
     
     if out.requires_grad:
-        # Extract metadata - NO tensor references
+        out._prev = {a, b} if a.requires_grad and b.requires_grad else ({a} if a.requires_grad else {b})
+        out._op = 'subtract'
+        
+        # Extract metadata
         a_requires_grad = a.requires_grad
         b_requires_grad = b.requires_grad
         a_shape = a.shape
         b_shape = b.shape
         out_shape = out.shape
-        
-        out._prev = {a, b} if a_requires_grad and b_requires_grad else ({a} if a_requires_grad else {b})
-        out._op = 'subtract'
         
         def _backward():
             if a_requires_grad:
@@ -265,17 +258,17 @@ def multiply(a: Union[Tensor, float], b: Union[Tensor, float]) -> Tensor:
                 requires_grad=a.requires_grad or b.requires_grad)
     
     if out.requires_grad:
-        # CRITICAL: Store only data arrays, not full tensors
+        out._prev = {a, b} if a.requires_grad and b.requires_grad else ({a} if a.requires_grad else {b})
+        out._op = 'multiply'
+        
+        # CRITICAL: Store only necessary data, not full tensors
         a_requires_grad = a.requires_grad
         b_requires_grad = b.requires_grad
-        a_data = a.data  # Just the array
-        b_data = b.data  # Just the array
+        a_data = a.data
+        b_data = b.data
         a_shape = a.shape
         b_shape = b.shape
         out_shape = out.shape
-        
-        out._prev = {a, b} if a_requires_grad and b_requires_grad else ({a} if a_requires_grad else {b})
-        out._op = 'multiply'
         
         def _backward():
             if a_requires_grad:
@@ -317,7 +310,7 @@ def multiply(a: Union[Tensor, float], b: Union[Tensor, float]) -> Tensor:
 
 
 def divide(a: Union[Tensor, float], b: Union[Tensor, float]) -> Tensor:
-    """Element-wise division - MEMORY OPTIMIZED"""
+    """Element-wise division - OPTIMIZED"""
     a = _ensure_tensor(a)
     b = _ensure_tensor(b)
     
@@ -326,6 +319,9 @@ def divide(a: Union[Tensor, float], b: Union[Tensor, float]) -> Tensor:
                 requires_grad=a.requires_grad or b.requires_grad)
     
     if out.requires_grad:
+        out._prev = {a, b} if a.requires_grad and b.requires_grad else ({a} if a.requires_grad else {b})
+        out._op = 'divide'
+        
         # CRITICAL: Store data arrays and metadata, not full tensors
         a_requires_grad = a.requires_grad
         b_requires_grad = b.requires_grad
@@ -334,9 +330,6 @@ def divide(a: Union[Tensor, float], b: Union[Tensor, float]) -> Tensor:
         a_shape = a.shape
         b_shape = b.shape
         out_shape = out.shape
-        
-        out._prev = {a, b} if a_requires_grad and b_requires_grad else ({a} if a_requires_grad else {b})
-        out._op = 'divide'
         
         def _backward():
             if a_requires_grad:
@@ -377,8 +370,9 @@ def divide(a: Union[Tensor, float], b: Union[Tensor, float]) -> Tensor:
     return out
 
 
+
 def power(a: Union[Tensor, float], exponent: Union[Tensor, float]) -> Tensor:
-    """Element-wise power - MEMORY OPTIMIZED"""
+    """Element-wise power - OPTIMIZED"""
     a = _ensure_tensor(a)
     exponent = _ensure_tensor(exponent)
     
@@ -387,14 +381,14 @@ def power(a: Union[Tensor, float], exponent: Union[Tensor, float]) -> Tensor:
                 requires_grad=a.requires_grad or exponent.requires_grad)
     
     if out.requires_grad:
+        out._prev = {a, exponent} if a.requires_grad and exponent.requires_grad else ({a} if a.requires_grad else {exponent})
+        out._op = 'power'
+        
         # Store only data arrays
         a_requires_grad = a.requires_grad
         exp_requires_grad = exponent.requires_grad
         a_data = a.data
         exp_data = exponent.data
-        
-        out._prev = {a, exponent} if a_requires_grad and exp_requires_grad else ({a} if a_requires_grad else {exponent})
-        out._op = 'power'
         
         def _backward():
             if a_requires_grad:
@@ -439,15 +433,15 @@ def matmul(a: Tensor, b: Tensor) -> Tensor:
                 requires_grad=a.requires_grad or b.requires_grad)
     
     if out.requires_grad:
-        # CRITICAL: Don't capture 'a' and 'b' tensors in closure!
+        out._prev = {a, b} if a.requires_grad and b.requires_grad else ({a} if a.requires_grad else {b})
+        out._op = 'matmul'
+        
+        # CRITICAL: Don't capture 'a' and 'b' tensors directly in closure!
         # Store only the data arrays we need
         a_requires_grad = a.requires_grad
         b_requires_grad = b.requires_grad
         a_data = a.data  # Keep reference to data, not full tensor
         b_data = b.data
-        
-        out._prev = {a, b} if a_requires_grad and b_requires_grad else ({a} if a_requires_grad else {b})
-        out._op = 'matmul'
         
         def _backward():
             if a_requires_grad:
@@ -474,7 +468,7 @@ def matmul(a: Tensor, b: Tensor) -> Tensor:
 
 
 def negative(a: Tensor) -> Tensor:
-    """Numerical negative with autograd - MEMORY OPTIMIZED"""
+    """Numerical negative with autograd"""
     backend = a.backend
     out = Tensor(backend.negative(a.data), backend=backend, device=a.device, 
                 requires_grad=a.requires_grad)
@@ -497,7 +491,7 @@ def negative(a: Tensor) -> Tensor:
 
 
 def positive(a: Tensor) -> Tensor:
-    """Numerical positive with autograd - MEMORY OPTIMIZED"""
+    """Numerical positive with autograd"""
     backend = a.backend
     out = Tensor(backend.positive(a.data), backend=backend, device=a.device, 
                 requires_grad=a.requires_grad)
@@ -518,7 +512,7 @@ def positive(a: Tensor) -> Tensor:
     return out
 
 
-# ===== Reduction Operations with Autograd - MEMORY OPTIMIZED =====
+# ===== Reduction Operations with Autograd =====
 
 def sum(a: Tensor, axis: Optional[Union[int, Tuple[int, ...]]] = None, keepdims: bool = False) -> Tensor:
     """Sum along axis with full autograd - MEMORY OPTIMIZED"""
@@ -527,41 +521,51 @@ def sum(a: Tensor, axis: Optional[Union[int, Tuple[int, ...]]] = None, keepdims:
                 device=a.device, requires_grad=a.requires_grad)
     
     if out.requires_grad:
+        out._prev = {a}
+        out._op = 'sum'
+        
         # CRITICAL: Store only necessary data, not full tensor references
         original_shape = a.shape
         original_axis = axis
         original_keepdims = keepdims
         
-        out._prev = {a}
-        out._op = 'sum'
-        
         def _backward():
-            grad_data = out.grad.data
-            
-            # Restore reduced dimensions
-            if not original_keepdims and original_axis is not None:
-                if isinstance(original_axis, int):
-                    grad_data = backend.expand_dims(grad_data, axis=original_axis)
-                else:
-                    for ax in sorted(original_axis):
-                        grad_data = backend.expand_dims(grad_data, axis=ax)
-            
-            # Use broadcast_to for memory efficiency (creates view, not copy)
-            if hasattr(backend, 'broadcast_to'):
-                grad_data = backend.broadcast_to(grad_data, original_shape)
-            else:
-                # Fallback: Let broadcasting happen naturally during addition
-                # This is more memory-efficient than creating a full array
-                pass
-            
             if a.grad is None:
+                # Efficiently broadcast gradient without creating large zero arrays
+                grad_data = out.grad.data
+                
+                # Restore reduced dimensions
+                if not original_keepdims and original_axis is not None:
+                    if isinstance(original_axis, int):
+                        grad_data = backend.expand_dims(grad_data, axis=original_axis)
+                    else:
+                        for ax in sorted(original_axis):
+                            grad_data = backend.expand_dims(grad_data, axis=ax)
+                
+                # Use broadcast_to for memory efficiency (creates view, not copy)
                 if hasattr(backend, 'broadcast_to'):
-                    a.grad = Tensor(grad_data, backend=backend)
+                    grad_data = backend.broadcast_to(grad_data, original_shape)
                 else:
-                    # Use addition with zeros to trigger broadcasting
-                    a.grad = Tensor(grad_data + backend.zeros(original_shape, dtype=grad_data.dtype), backend=backend)
+                    # Fallback: multiply by ones (still better than explicit loop)
+                    grad_data = grad_data * backend.ones(original_shape, dtype=grad_data.dtype)
+                
+                a.grad = Tensor(grad_data, backend=backend)
             else:
-                # Natural broadcasting during addition
+                # Same broadcasting for accumulation
+                grad_data = out.grad.data
+                
+                if not original_keepdims and original_axis is not None:
+                    if isinstance(original_axis, int):
+                        grad_data = backend.expand_dims(grad_data, axis=original_axis)
+                    else:
+                        for ax in sorted(original_axis):
+                            grad_data = backend.expand_dims(grad_data, axis=ax)
+                
+                if hasattr(backend, 'broadcast_to'):
+                    grad_data = backend.broadcast_to(grad_data, original_shape)
+                else:
+                    grad_data = grad_data * backend.ones(original_shape, dtype=grad_data.dtype)
+                
                 a.grad.data = a.grad.data + grad_data
         
         out._backward = _backward
@@ -576,6 +580,9 @@ def mean(a: Tensor, axis: Optional[Union[int, Tuple[int, ...]]] = None, keepdims
                 device=a.device, requires_grad=a.requires_grad)
     
     if out.requires_grad:
+        out._prev = {a}
+        out._op = 'mean'
+        
         # CRITICAL: Store only necessary data
         original_shape = a.shape
         original_axis = axis
@@ -591,33 +598,42 @@ def mean(a: Tensor, axis: Optional[Union[int, Tuple[int, ...]]] = None, keepdims
             for ax in axis:
                 n *= a.shape[ax]
         
-        out._prev = {a}
-        out._op = 'mean'
-        
         def _backward():
-            grad_data = out.grad.data
-            
-            # Restore reduced dimensions
-            if not original_keepdims and original_axis is not None:
-                if isinstance(original_axis, int):
-                    grad_data = backend.expand_dims(grad_data, axis=original_axis)
-                else:
-                    for ax in sorted(original_axis):
-                        grad_data = backend.expand_dims(grad_data, axis=ax)
-            
-            # Divide by n first (before broadcasting)
-            grad_data = grad_data / n
-            
-            # Broadcast and assign
-            if hasattr(backend, 'broadcast_to'):
-                grad_data = backend.broadcast_to(grad_data, original_shape)
-            
             if a.grad is None:
+                grad_data = out.grad.data
+                
+                # Restore reduced dimensions
+                if not original_keepdims and original_axis is not None:
+                    if isinstance(original_axis, int):
+                        grad_data = backend.expand_dims(grad_data, axis=original_axis)
+                    else:
+                        for ax in sorted(original_axis):
+                            grad_data = backend.expand_dims(grad_data, axis=ax)
+                
+                # Broadcast and divide by n
                 if hasattr(backend, 'broadcast_to'):
-                    a.grad = Tensor(grad_data, backend=backend)
+                    grad_data = backend.broadcast_to(grad_data, original_shape)
                 else:
-                    a.grad = Tensor(grad_data + backend.zeros(original_shape, dtype=grad_data.dtype), backend=backend)
+                    grad_data = grad_data * backend.ones(original_shape, dtype=grad_data.dtype)
+                
+                grad_data = grad_data / n
+                a.grad = Tensor(grad_data, backend=backend)
             else:
+                grad_data = out.grad.data
+                
+                if not original_keepdims and original_axis is not None:
+                    if isinstance(original_axis, int):
+                        grad_data = backend.expand_dims(grad_data, axis=original_axis)
+                    else:
+                        for ax in sorted(original_axis):
+                            grad_data = backend.expand_dims(grad_data, axis=ax)
+                
+                if hasattr(backend, 'broadcast_to'):
+                    grad_data = backend.broadcast_to(grad_data, original_shape)
+                else:
+                    grad_data = grad_data * backend.ones(original_shape, dtype=grad_data.dtype)
+                
+                grad_data = grad_data / n
                 a.grad.data = a.grad.data + grad_data
         
         out._backward = _backward
@@ -625,7 +641,7 @@ def mean(a: Tensor, axis: Optional[Union[int, Tuple[int, ...]]] = None, keepdims
     return out
 
 
-# ===== Activation Functions with Full Autograd - MEMORY OPTIMIZED =====
+# ===== Activation Functions with Full Autograd =====
 
 def relu(a: Tensor) -> Tensor:
     """ReLU activation with full autograd - MEMORY OPTIMIZED"""
@@ -634,12 +650,12 @@ def relu(a: Tensor) -> Tensor:
                 requires_grad=a.requires_grad)
     
     if out.requires_grad:
+        out._prev = {a}
+        out._op = 'relu'
+        
         # CRITICAL: Store mask instead of full tensor reference
         # Gradient is 1 where input > 0, else 0
         relu_mask = (a.data > 0).astype(a.data.dtype)
-        
-        out._prev = {a}
-        out._op = 'relu'
         
         def _backward():
             if a.requires_grad:
@@ -662,11 +678,11 @@ def sigmoid(a: Tensor) -> Tensor:
     out = Tensor(sig, backend=backend, device=a.device, requires_grad=a.requires_grad)
     
     if out.requires_grad:
-        # CRITICAL: Store only the sigmoid output value, not full tensor
-        sig_value = sig  # This is just the array, not a Tensor
-        
         out._prev = {a}
         out._op = 'sigmoid'
+        
+        # CRITICAL: Store only the sigmoid output value, not full tensor
+        sig_value = sig  # This is just the array, not a Tensor
         
         def _backward():
             if a.requires_grad:
@@ -687,17 +703,17 @@ def sigmoid(a: Tensor) -> Tensor:
 
 
 def tanh(a: Tensor) -> Tensor:
-    """Tanh activation - MEMORY OPTIMIZED"""
+    """Tanh activation - OPTIMIZED"""
     backend = a.backend
     tanh_val = backend.tanh(a.data)
     out = Tensor(tanh_val, backend=backend, device=a.device, requires_grad=a.requires_grad)
     
     if out.requires_grad:
-        # Store tanh value (needed for gradient)
-        tanh_value = tanh_val
-        
         out._prev = {a}
         out._op = 'tanh'
+        
+        # Store tanh value (needed for gradient)
+        tanh_value = tanh_val
         
         def _backward():
             if a.requires_grad:
@@ -725,12 +741,12 @@ def softmax(a: Tensor, axis: int = -1) -> Tensor:
     out = Tensor(softmax_val, backend=backend, device=a.device, requires_grad=a.requires_grad)
     
     if out.requires_grad:
+        out._prev = {a}
+        out._op = 'softmax'
+        
         # CRITICAL: Store only the softmax values and axis
         s = softmax_val  # Just the array
         softmax_axis = axis
-        
-        out._prev = {a}
-        out._op = 'softmax'
         
         def _backward():
             if a.requires_grad:
@@ -756,7 +772,7 @@ def softmax(a: Tensor, axis: int = -1) -> Tensor:
 
 
 def gelu(a: Tensor) -> Tensor:
-    """GELU activation with full autograd - MEMORY OPTIMIZED"""
+    """GELU activation with full autograd"""
     backend = a.backend
     import math
     
@@ -772,25 +788,21 @@ def gelu(a: Tensor) -> Tensor:
     out = Tensor(gelu_val, backend=backend, device=a.device, requires_grad=a.requires_grad)
     
     if out.requires_grad:
-        # Store computed values (not full tensors)
-        x_data = x
-        tanh_value = tanh_val
-        
         out._prev = {a}
         out._op = 'gelu'
         
         def _backward():
             if a.requires_grad:
                 # Approximate gradient
-                sech2 = backend.subtract(1, backend.power(tanh_value, 2))
-                term1 = backend.multiply(0.5, backend.add(1, tanh_value))
+                sech2 = backend.subtract(1, backend.power(tanh_val, 2))
+                term1 = backend.multiply(0.5, backend.add(1, tanh_val))
                 term2 = backend.multiply(
                     0.5 * sqrt_2_pi,
                     backend.multiply(
-                        x_data,
+                        x,
                         backend.multiply(
                             sech2,
-                            backend.add(1, backend.multiply(3 * 0.044715, backend.power(x_data, 2)))
+                            backend.add(1, backend.multiply(3 * 0.044715, backend.power(x, 2)))
                         )
                     )
                 )
@@ -806,20 +818,20 @@ def gelu(a: Tensor) -> Tensor:
     return out
 
 
-# ===== Mathematical Functions with Full Autograd - MEMORY OPTIMIZED =====
+# ===== Mathematical Functions with Full Autograd =====
 
 def exp(a: Tensor) -> Tensor:
-    """Exponential - MEMORY OPTIMIZED"""
+    """Exponential - OPTIMIZED"""
     backend = a.backend
     exp_val = backend.exp(a.data)
     out = Tensor(exp_val, backend=backend, device=a.device, requires_grad=a.requires_grad)
     
     if out.requires_grad:
-        # Store the computed exp value (it's the gradient multiplier)
-        exp_value = exp_val
-        
         out._prev = {a}
         out._op = 'exp'
+        
+        # Store the computed exp value (it's the gradient multiplier)
+        exp_value = exp_val
         
         def _backward():
             if a.requires_grad:
@@ -837,16 +849,16 @@ def exp(a: Tensor) -> Tensor:
 
 
 def log(a: Tensor) -> Tensor:
-    """Natural logarithm - MEMORY OPTIMIZED"""
+    """Natural logarithm - OPTIMIZED"""
     backend = a.backend
     out = Tensor(backend.log(a.data), backend=backend, device=a.device, requires_grad=a.requires_grad)
     
     if out.requires_grad:
-        # Store input data (needed for 1/x gradient)
-        a_data = a.data
-        
         out._prev = {a}
         out._op = 'log'
+        
+        # Store input data (needed for 1/x gradient)
+        a_data = a.data
         
         def _backward():
             if a.requires_grad:
@@ -864,17 +876,17 @@ def log(a: Tensor) -> Tensor:
 
 
 def sqrt(a: Tensor) -> Tensor:
-    """Square root - MEMORY OPTIMIZED"""
+    """Square root - OPTIMIZED"""
     backend = a.backend
     sqrt_val = backend.sqrt(a.data)
     out = Tensor(sqrt_val, backend=backend, device=a.device, requires_grad=a.requires_grad)
     
     if out.requires_grad:
-        # Store sqrt value (needed for gradient)
-        sqrt_value = sqrt_val
-        
         out._prev = {a}
         out._op = 'sqrt'
+        
+        # Store sqrt value (needed for gradient)
+        sqrt_value = sqrt_val
         
         def _backward():
             if a.requires_grad:
@@ -892,21 +904,18 @@ def sqrt(a: Tensor) -> Tensor:
 
 
 def abs(a: Tensor) -> Tensor:
-    """Absolute value with full autograd - MEMORY OPTIMIZED"""
+    """Absolute value with full autograd"""
     backend = a.backend
     out = Tensor(backend.abs(a.data), backend=backend, device=a.device, requires_grad=a.requires_grad)
     
     if out.requires_grad:
-        # Store sign for gradient
-        sign_a = backend.sign(a.data)
-        
         out._prev = {a}
         out._op = 'abs'
         
         def _backward():
             if a.requires_grad:
                 # Gradient: sign(x)
-                grad_a = backend.multiply(out.grad.data, sign_a)
+                grad_a = backend.multiply(out.grad.data, backend.sign(a.data))
                 
                 if a.grad is None:
                     a.grad = Tensor(grad_a, backend=backend)
@@ -919,21 +928,18 @@ def abs(a: Tensor) -> Tensor:
 
 
 def sin(a: Tensor) -> Tensor:
-    """Sine with full autograd - MEMORY OPTIMIZED"""
+    """Sine with full autograd"""
     backend = a.backend
     out = Tensor(backend.sin(a.data), backend=backend, device=a.device, requires_grad=a.requires_grad)
     
     if out.requires_grad:
-        # Store input data for cos computation
-        a_data = a.data
-        
         out._prev = {a}
         out._op = 'sin'
         
         def _backward():
             if a.requires_grad:
                 # Gradient: cos(x)
-                grad_a = backend.multiply(out.grad.data, backend.cos(a_data))
+                grad_a = backend.multiply(out.grad.data, backend.cos(a.data))
                 
                 if a.grad is None:
                     a.grad = Tensor(grad_a, backend=backend)
@@ -946,21 +952,18 @@ def sin(a: Tensor) -> Tensor:
 
 
 def cos(a: Tensor) -> Tensor:
-    """Cosine with full autograd - MEMORY OPTIMIZED"""
+    """Cosine with full autograd"""
     backend = a.backend
     out = Tensor(backend.cos(a.data), backend=backend, device=a.device, requires_grad=a.requires_grad)
     
     if out.requires_grad:
-        # Store input data for sin computation
-        a_data = a.data
-        
         out._prev = {a}
         out._op = 'cos'
         
         def _backward():
             if a.requires_grad:
                 # Gradient: -sin(x)
-                grad_a = backend.multiply(out.grad.data, backend.negative(backend.sin(a_data)))
+                grad_a = backend.multiply(out.grad.data, backend.negative(backend.sin(a.data)))
                 
                 if a.grad is None:
                     a.grad = Tensor(grad_a, backend=backend)
@@ -972,20 +975,20 @@ def cos(a: Tensor) -> Tensor:
     return out
 
 
-# ===== Shape Operations with Autograd - MEMORY OPTIMIZED =====
+# ===== Shape Operations with Autograd =====
 
 def reshape(a: Tensor, shape: Tuple[int, ...]) -> Tensor:
-    """Reshape tensor - MEMORY OPTIMIZED"""
+    """Reshape tensor - OPTIMIZED"""
     backend = a.backend
     out = Tensor(backend.reshape(a.data, shape), backend=backend, device=a.device, 
                 requires_grad=a.requires_grad)
     
     if out.requires_grad:
-        # Store original shape
-        original_shape = a.shape
-        
         out._prev = {a}
         out._op = 'reshape'
+        
+        # Store original shape
+        original_shape = a.shape
         
         def _backward():
             if a.requires_grad:
@@ -1002,12 +1005,15 @@ def reshape(a: Tensor, shape: Tuple[int, ...]) -> Tensor:
 
 
 def transpose(a: Tensor, axes: Optional[Tuple[int, ...]] = None) -> Tensor:
-    """Transpose tensor - MEMORY OPTIMIZED"""
+    """Transpose tensor - OPTIMIZED"""
     backend = a.backend
     out = Tensor(backend.transpose(a.data, axes=axes), backend=backend, device=a.device, 
                 requires_grad=a.requires_grad)
     
     if out.requires_grad:
+        out._prev = {a}
+        out._op = 'transpose'
+        
         # Compute and store inverse permutation
         if axes is None:
             inv_axes = None
@@ -1016,9 +1022,6 @@ def transpose(a: Tensor, axes: Optional[Tuple[int, ...]] = None) -> Tensor:
             for i, ax in enumerate(axes):
                 inv_axes[ax] = i
             inv_axes = tuple(inv_axes)
-        
-        out._prev = {a}
-        out._op = 'transpose'
         
         def _backward():
             if a.requires_grad:
@@ -1038,20 +1041,18 @@ def transpose(a: Tensor, axes: Optional[Tuple[int, ...]] = None) -> Tensor:
 
 
 def squeeze(a: Tensor, axis: Optional[Union[int, Tuple[int, ...]]] = None) -> Tensor:
-    """Remove single-dimensional entries with autograd - MEMORY OPTIMIZED"""
+    """Remove single-dimensional entries with autograd"""
     backend = a.backend
     out = Tensor(backend.squeeze(a.data, axis=axis), backend=backend, device=a.device, 
                 requires_grad=a.requires_grad)
     
     if out.requires_grad:
-        original_shape = a.shape
-        
         out._prev = {a}
         out._op = 'squeeze'
         
         def _backward():
             if a.requires_grad:
-                grad_a = backend.reshape(out.grad.data, original_shape)
+                grad_a = backend.reshape(out.grad.data, a.shape)
                 
                 if a.grad is None:
                     a.grad = Tensor(grad_a, backend=backend)
@@ -1064,20 +1065,18 @@ def squeeze(a: Tensor, axis: Optional[Union[int, Tuple[int, ...]]] = None) -> Te
 
 
 def unsqueeze(a: Tensor, axis: int) -> Tensor:
-    """Add a dimension with autograd - MEMORY OPTIMIZED"""
+    """Add a dimension with autograd"""
     backend = a.backend
     out = Tensor(backend.expand_dims(a.data, axis=axis), backend=backend, device=a.device, 
                 requires_grad=a.requires_grad)
     
     if out.requires_grad:
-        unsqueeze_axis = axis
-        
         out._prev = {a}
         out._op = 'unsqueeze'
         
         def _backward():
             if a.requires_grad:
-                grad_a = backend.squeeze(out.grad.data, axis=unsqueeze_axis)
+                grad_a = backend.squeeze(out.grad.data, axis=axis)
                 
                 if a.grad is None:
                     a.grad = Tensor(grad_a, backend=backend)
@@ -1090,7 +1089,7 @@ def unsqueeze(a: Tensor, axis: int) -> Tensor:
 
 
 def concatenate(tensors: List[Tensor], axis: int = 0) -> Tensor:
-    """Concatenate tensors - MEMORY OPTIMIZED"""
+    """Concatenate tensors - OPTIMIZED"""
     backend = tensors[0].backend
     arrays = [t.data for t in tensors]
     requires_grad = any(t.requires_grad for t in tensors)
@@ -1098,6 +1097,9 @@ def concatenate(tensors: List[Tensor], axis: int = 0) -> Tensor:
                 device=tensors[0].device, requires_grad=requires_grad)
     
     if out.requires_grad:
+        out._prev = set(t for t in tensors if t.requires_grad)
+        out._op = 'concatenate'
+        
         # Pre-compute split indices
         split_indices = []
         current = 0
@@ -1107,17 +1109,12 @@ def concatenate(tensors: List[Tensor], axis: int = 0) -> Tensor:
             current += size
             split_indices.append(current)
         
-        concat_axis = axis
-        
-        out._prev = set(t for t in tensors if t.requires_grad)
-        out._op = 'concatenate'
-        
         def _backward():
             grad_data = out.grad.data
             
             # Split gradient along concatenation axis
             if len(split_indices) > 0:
-                grad_splits = backend.split(grad_data, split_indices, axis=concat_axis)
+                grad_splits = backend.split(grad_data, split_indices, axis=axis)
             else:
                 grad_splits = [grad_data]
             
@@ -1134,7 +1131,7 @@ def concatenate(tensors: List[Tensor], axis: int = 0) -> Tensor:
 
 
 def stack(tensors: List[Tensor], axis: int = 0) -> Tensor:
-    """Stack tensors along new axis with autograd - MEMORY OPTIMIZED"""
+    """Stack tensors along new axis with autograd"""
     backend = tensors[0].backend
     arrays = [t.data for t in tensors]
     requires_grad = any(t.requires_grad for t in tensors)
@@ -1142,18 +1139,15 @@ def stack(tensors: List[Tensor], axis: int = 0) -> Tensor:
                 device=tensors[0].device, requires_grad=requires_grad)
     
     if out.requires_grad:
-        num_tensors = len(tensors)
-        stack_axis = axis
-        
         out._prev = set(t for t in tensors if t.requires_grad)
         out._op = 'stack'
         
         def _backward():
-            grad_splits = backend.split(out.grad.data, num_tensors, axis=stack_axis)
+            grad_splits = backend.split(out.grad.data, len(tensors), axis=axis)
             
             for t, grad_split in zip(tensors, grad_splits):
                 if t.requires_grad:
-                    grad_split = backend.squeeze(grad_split, axis=stack_axis)
+                    grad_split = backend.squeeze(grad_split, axis=axis)
                     if t.grad is None:
                         t.grad = Tensor(grad_split, backend=backend)
                     else:
@@ -1165,7 +1159,7 @@ def stack(tensors: List[Tensor], axis: int = 0) -> Tensor:
 
 
 def flatten(a: Tensor, start_dim: int = 0, end_dim: int = -1) -> Tensor:
-    """Flatten dimensions with autograd - MEMORY OPTIMIZED"""
+    """Flatten dimensions with autograd"""
     if end_dim < 0:
         end_dim = len(a.shape) + end_dim
     

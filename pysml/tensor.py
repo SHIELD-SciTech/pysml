@@ -1,35 +1,45 @@
 """
-PySML Tensor Class - MEMORY OPTIMIZED
-Critical fixes for 10x memory reduction
+PySML Tensor Class with Full Autograd Support - MEMORY OPTIMIZED
+Enhanced tensor implementation with complete gradient computation and aggressive memory management
 """
 
-from typing import Optional, Set
-import weakref
+from typing import Optional, Union, Tuple, List, Set
 
 
 class Tensor:
     """
-    Memory-optimized Tensor with aggressive cleanup
+    Universal Tensor class with full automatic differentiation support
     
-    Key optimizations:
-    1. Weak references for computation graph
-    2. Immediate gradient cleanup
-    3. In-place operations
-    4. Parameter marking for selective gradient retention
+    Attributes:
+        data: Underlying array data from backend
+        backend: Backend module being used
+        device: Device string ('cpu', 'xpu', 'cuda')
+        requires_grad: Whether to track gradients
+        grad: Gradient tensor
+        grad_fn: Function for backward pass
+        _prev: Set of parent tensors in computation graph
+        _op: Operation that created this tensor
     """
     
-    # Class-level memory tracking
-    _total_tensors = 0
-    _active_tensors = weakref.WeakSet()
-    
     def __init__(self, data, backend=None, device: str = None, requires_grad: bool = False):
+        """
+        Initialize Tensor
+        
+        Args:
+            data: Array-like data or backend array
+            backend: Backend module to use (auto-detected if None)
+            device: Device to place tensor on
+            requires_grad: Whether to compute gradients
+        """
         from . import engine
         
+        # Auto-detect backend if not provided
         if backend is None:
             backend = engine.get_backend()
         
         self.backend = backend
         
+        # Convert data to backend array
         if hasattr(data, '__array__'):
             self.data = data
         else:
@@ -44,57 +54,55 @@ class Tensor:
         self._prev: Set['Tensor'] = set()
         self._op: str = ''
         self._backward = lambda: None
-        
-        # Mark if this is a model parameter (don't free its gradients)
-        self._is_parameter = False
-        
-        # Track for debugging
-        Tensor._total_tensors += 1
-        Tensor._active_tensors.add(self)
-    
-    def __del__(self):
-        """Cleanup when tensor is destroyed"""
-        try:
-            if hasattr(self, 'data') and self.data is not None:
-                del self.data
-            if hasattr(self, 'grad') and self.grad is not None:
-                del self.grad
-        except:
-            pass
     
     def __hash__(self):
+        """Make tensor hashable using id"""
         return id(self)
     
     def __eq__(self, other):
+        """Equality for hashing (identity-based) or element-wise comparison"""
+        # For hashing and identity comparison
         if not isinstance(other, Tensor):
+            # Element-wise comparison with scalar
             from . import engine
             return engine.equal(self, other)
+        # For sets and dicts, use identity
         return id(self) == id(other)
     
     def equals(self, other):
+        """Element-wise equality comparison (returns boolean Tensor)"""
         from . import engine
         return engine.equal(self, other)
     
     @property
     def shape(self):
+        """Return shape of tensor"""
         return self.data.shape
     
     @property
     def dtype(self):
+        """Return data type of tensor"""
         return self.data.dtype
     
     @property
     def ndim(self):
+        """Return number of dimensions"""
         return self.data.ndim
     
     @property
     def size(self):
+        """Return total number of elements"""
         return self.data.size
     
     @property
     def T(self):
+        """Transpose - backend-aware version"""
         from . import engine
+        
+        # Use backend's transpose to maintain backend type
         transposed_data = self.backend.transpose(self.data)
+        
+        # Create new tensor with transposed data
         result = Tensor(transposed_data, backend=self.backend, device=self.device,
                        requires_grad=self.requires_grad)
         
@@ -114,6 +122,7 @@ class Tensor:
         return result
     
     def numpy(self):
+        """Convert to NumPy array"""
         if hasattr(self.backend, 'asnumpy'):
             return self.backend.asnumpy(self.data)
         elif hasattr(self.data, 'get'):
@@ -123,43 +132,54 @@ class Tensor:
             return np.array(self.data)
     
     def item(self):
+        """Return scalar value (only for single-element tensors)"""
         if self.size != 1:
             raise ValueError("Only single-element tensors can be converted to scalar")
         return self.numpy().item()
     
     def to(self, device: str):
+        """Move tensor to different device"""
         from . import engine
         return engine.to_device(self, device)
     
     def zero_grad(self, set_to_none=True):
-        """OPTIMIZED: Aggressively free gradient memory"""
+        """
+        Zero out gradients and clear computation graph
+        
+        Args:
+            set_to_none: If True, set grad to None (better for memory). 
+                        If False, zero out existing gradient array.
+        """
         if set_to_none:
-            if self.grad is not None:
-                try:
-                    del self.grad.data
-                except:
-                    pass
-                self.grad = None
+            self.grad = None
         else:
             if self.grad is not None:
+                # Zero out in-place to avoid allocation
                 self.grad.data.fill(0)
         
-        # Clear computation graph
+        # CRITICAL: Clear computation graph to free memory
         self._prev.clear()
         self._backward = lambda: None
     
     def backward(self, grad=None, retain_graph=False):
-        """MEMORY OPTIMIZED: Aggressive cleanup during backprop"""
+        """
+        Compute gradients via backpropagation using topological sort
+        
+        Args:
+            grad: Gradient from upstream (defaults to ones for scalar)
+            retain_graph: If False (default), free computation graph after backward pass
+        """
         if not self.requires_grad:
             return
         
+        # Initialize gradient
         if grad is None:
             if self.size == 1:
                 grad = Tensor(self.backend.ones_like(self.data), backend=self.backend)
             else:
                 raise RuntimeError("Gradient must be specified for non-scalar tensors")
         
-        # Build topological order
+        # Build topological order of computation graph
         topo = []
         visited = set()
         
@@ -172,39 +192,32 @@ class Tensor:
         
         build_topo(self)
         
-        # Initialize gradient
+        # Initialize gradient for this tensor
         self.grad = grad
         
-        # Backward pass with immediate cleanup
+        # Propagate gradients in reverse topological order
         for node in reversed(topo):
             if node.grad is not None:
                 node._backward()
                 
+                # CRITICAL FIX: Clear computation graph after backward to free memory
                 if not retain_graph:
-                    # Clear computation graph immediately
                     node._prev.clear()
                     node._backward = lambda: None
-                    
-                    # CRITICAL: Free intermediate gradients (keep only parameter gradients)
-                    if node is not self and not getattr(node, '_is_parameter', False):
-                        if node.grad is not None:
-                            try:
-                                del node.grad.data
-                            except:
-                                pass
-                            node.grad = None
+                    # Keep grad but clear the graph
         
-        # Clean up temporary structures
+        # Clear visited set to free memory
         visited.clear()
-        topo.clear()
-        del topo, visited
+        del topo
     
     def detach(self):
+        """Return a new tensor detached from the computation graph"""
         result = Tensor(self.data.copy(), backend=self.backend, 
                        device=self.device, requires_grad=False)
         return result
     
     def clone(self):
+        """Return a copy of the tensor that retains gradient tracking"""
         result = Tensor(self.data.copy(), backend=self.backend,
                        device=self.device, requires_grad=self.requires_grad)
         if self.requires_grad:
@@ -221,40 +234,15 @@ class Tensor:
         
         return result
     
-    # ===== IN-PLACE OPERATIONS (Memory Efficient) =====
+    def __repr__(self):
+        grad_str = f", requires_grad={self.requires_grad}" if self.requires_grad else ""
+        device_str = f", device='{self.device}'" if self.device else ""
+        return f"Tensor({self.data}{grad_str}{device_str})"
     
-    def add_(self, other):
-        """In-place addition"""
-        if isinstance(other, Tensor):
-            self.data += other.data
-        else:
-            self.data += other
-        return self
+    def __str__(self):
+        return str(self.data)
     
-    def mul_(self, scalar):
-        """In-place multiplication by scalar"""
-        self.data *= scalar
-        return self
-    
-    def div_(self, scalar):
-        """In-place division by scalar"""
-        self.data /= scalar
-        return self
-    
-    def zero_(self):
-        """Zero out data in-place"""
-        self.data.fill(0)
-        return self
-    
-    def copy_(self, other):
-        """Copy data from another tensor in-place"""
-        if isinstance(other, Tensor):
-            self.data[:] = other.data
-        else:
-            self.data[:] = other
-        return self
-    
-    # ===== Arithmetic Operators =====
+    # ===== Arithmetic Operators with Full Autograd =====
     
     def __add__(self, other):
         from . import engine
@@ -305,6 +293,7 @@ class Tensor:
         return engine.matmul(self, other)
     
     # ===== Comparison Operators =====
+    # Note: __eq__ is handled specially for hashing, use .equals() for element-wise comparison
     
     def __ne__(self, other):
         from . import engine
@@ -339,6 +328,8 @@ class Tensor:
             def _backward():
                 if self.grad is None:
                     self.grad = Tensor(self.backend.zeros_like(self.data), backend=self.backend)
+                
+                # Add gradient at the indexed location
                 grad_data = self.grad.data
                 grad_data[key] = grad_data[key] + result.grad.data
             
@@ -360,6 +351,26 @@ class Tensor:
     
     def transpose(self, axes=None):
         from . import engine
+        return engine.transpose(self, axes)
+    
+    def permute(self, *axes):
+        """
+        Permute the dimensions of the tensor.
+        More intuitive than transpose for reordering dimensions.
+        
+        Args:
+            *axes: New order of dimensions (can be passed as tuple or unpacked)
+        
+        Example:
+            >>> x = Tensor(data)  # shape: (2, 3, 4, 5)
+            >>> y = x.permute(0, 2, 1, 3)  # shape: (2, 4, 3, 5)
+            >>> # or
+            >>> y = x.permute((0, 2, 1, 3))
+        """
+        from . import engine
+        # Handle both x.permute(0, 2, 1, 3) and x.permute((0, 2, 1, 3))
+        if len(axes) == 1 and isinstance(axes[0], (tuple, list)):
+            axes = axes[0]
         return engine.transpose(self, axes)
     
     def flatten(self, start_dim=0, end_dim=-1):
@@ -441,19 +452,3 @@ class Tensor:
     def clip(self, min_val=None, max_val=None):
         from . import engine
         return engine.clip(self, min_val, max_val)
-    
-    def __repr__(self):
-        grad_str = f", requires_grad={self.requires_grad}" if self.requires_grad else ""
-        device_str = f", device='{self.device}'" if self.device else ""
-        return f"Tensor({self.data}{grad_str}{device_str})"
-    
-    def __str__(self):
-        return str(self.data)
-    
-    @classmethod
-    def memory_stats(cls):
-        """Get memory statistics"""
-        return {
-            'total_created': cls._total_tensors,
-            'currently_active': len(cls._active_tensors),
-        }

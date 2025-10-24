@@ -62,6 +62,7 @@ try:
     from .models import (
         TransformerLM,
         TransformerConfig,
+        MultiHeadAttention,
         Classifier,
         ClassifierConfig,
         VAE,
@@ -136,6 +137,7 @@ __all__ = [
     # Preset models
     'TransformerLM',
     'TransformerConfig',
+    'MultiHeadAttention',
     'Classifier',
     'ClassifierConfig',
     'VAE',
