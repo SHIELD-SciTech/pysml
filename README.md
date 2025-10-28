@@ -1,158 +1,211 @@
-# **PySML – Python SHIELD Machine Learning Framework**
+# **PySML v0.5-alpha1 – Python SHIELD Machine Learning Framework**
 
-> *Enterprise‑Grade Deep Learning with Multi‑Device Training and Full Backend Support*  
+> *Enterprise-Grade Distributed AI with Multi-Backend Support (CPU, CUDA, XPU)*  
 > *© S.H.I.E.L.D. / Strategic Homeland Intervention, Enforcement, and Logistics Division*
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: Proprietary](https://img.shields.io/badge/license-Proprietary-red.svg)](LICENSE)
 [![Backend: CPU/CUDA/XPU](https://img.shields.io/badge/backend-CPU%20%7C%20CUDA%20%7C%20XPU-green.svg)](README.md)
-[![Version: 0.4.8](https://img.shields.io/badge/version-0.4.8-brightgreen.svg)](README.md)
+[![Version: 0.5-alpha1](https://img.shields.io/badge/version-0.5--alpha1-brightgreen.svg)](README.md)
 
 ---
 
-## What's New in v0.4.8
+## What's New in v0.5-alpha1
 
-**Targeted Optimizations – Memory & Speed**
+**Major Upgrade — October 2025**
 
-This release focuses on **two primary optimizations** across the core stack:
+PySML v0.5 introduces a refined distributed deep learning core with AMP (Automatic Mixed Precision), RWKV-based transformer alternatives, and enhanced backend optimizations.
 
-### 🚀 Speed
-- **In‑place optimizer updates (SGD/Adam)**: parameter arrays updated without allocating temporaries (‑**1.3× fewer allocations** on inner loops).
-- **Faster autograd**: smaller closures store **only minimal ctx** (data/shape flags), with broadcasting‑aware reducers.
-- **Vectorized softmax backward** and streamlined element‑wise grads (ReLU/Sigmoid/Tanh/Exp/Log).
-- **Backend‑first math**: avoids Python round‑trips; favors ufuncs on NumPy/CuPy/DPNP wherever available.
+### Core Improvements
+- **RWKV Model Support** – Production-ready recurrent-transformer architecture for LLMs  
+- **Diffusion Models** – UNet-based diffusion templates for image generation  
+- **Audio Models** – WaveNet, Whisper-like encoder-decoders for audio tasks  
+- **AdamW Optimizer (AMP-aware)** – Improved stability and convergence  
+- **AMP Integration** – Automatic mixed precision for CUDA & XPU  
+- **Enhanced DDP** – Unified data/pipeline parallelism with adaptive sync  
 
-### 🧠 Memory
-- **Compact `Tensor` objects** using `__slots__` (reduces per‑tensor overhead).
-- **Aggressive graph freeing** after backward; `no_grad` context for inference/initialization.
-- **Fewer copies**: dtype casts and `.clone()` avoid redundant allocations; broadcasting reducers reuse shapes.
-- **Device‑neutral `.to()`** uses host‑only hop one time (numpy ↔ backend) to avoid chain conversions.
+### Backend Enhancements
+- Optimized tensor memory layout for multi-device systems  
+- Adaptive kernel dispatch for Intel XPU (oneAPI) and NVIDIA CUDA  
+- Reduced host-device synchronization overhead  
 
-> Expect **~10–25% faster training steps** and **notable memory savings** in typical MLP/Transformer blocks (numbers vary by backend and model size).
+### Developer Experience
+- Unified API design for tensors, modules, and optimizers  
+- Expanded examples and model presets  
+- Extended functional API parity with PyTorch  
 
 ---
 
 ## Overview
 
-PySML provides a **PyTorch‑like API** with **multi‑device** backends:
-- **CPU** (NumPy), **CUDA** (CuPy), **XPU** (DPNP/DPCTL)
-- Data & pipeline primitives (DDP folder) for multi‑device scaling
+**PySML (Python SHIELD Machine Learning Framework)** provides a flexible, distributed deep learning foundation for multi-device and multi-backend research. Designed for high performance and hardware agnostic scalability.
+
+Key features include:
+- Distributed data and pipeline parallel training
+- Unified CPU/CUDA/XPU backend API
+- AMP-compatible autograd engine
+- RWKV, diffusion, and transformer-based templates
+- Lightweight, NumPy-compatible syntax
 
 ---
 
-## Highlights
+## Quick Installation
 
-- **Full Autograd** with minimal‑ctx, broadcasting‑aware grads
-- **Optimizers** (SGD, Adam) rewritten for in‑place, allocation‑free updates
-- **Stability**: numerically stable softmax / cross‑entropy path
-- **Interoperability**: easy `.to("cpu"|"cuda:0"|"xpu:0")` and `.numpy()`
-- **Dev Ergonomics**: `no_grad()` for init/inference, simple training loops
+```bash
+pip install numpy
+pip install cupy-cuda12x     # For NVIDIA GPUs (CUDA 12.x)
+pip install dpnp dpctl       # For Intel Arc / Xe GPUs
+```
 
----
+Verify installation:
 
-## Quick Example
-
-```python
-import pysml
-import pysml.nn.functional as F
-
-# device can be "cpu", "cuda:0", or "xpu:0"
-pysml.engine.set_device("cpu")
-
-w = pysml.randn(128, 64, requires_grad=True)
-x = pysml.randn(16, 128)
-y = pysml.randn(16, 64)
-
-out = pysml.matmul(x, w)
-loss = F.mse_loss(out, y)
-
-loss.backward()        # builds + frees graph
-opt = pysml.nn.optim.Adam([w], lr=1e-3)
-opt.step()             # in-place update
-opt.zero_grad()
+```bash
+python -c "import pysml; print(pysml.__version__)"
 ```
 
 ---
 
-## Installation (Backends)
+## Quick Start Examples
 
-- **CPU**: `pip install numpy`
-- **CUDA (NVIDIA)**: `pip install cupy-cuda12x` (or appropriate CUDA build)
-- **XPU (Intel Arc/Xe)**: `pip install dpnp dpctl`  
-  *Recommended channel for best perf:*  
-  `pip install -i https://software.repos.intel.com/python/pypi numpy dpnp dpctl`
+### Tensor Operations
+
+```python
+import pysml
+
+a = pysml.randn(4, 4, requires_grad=True)
+b = pysml.ones(4, 4)
+
+c = pysml.add(a, b)
+d = pysml.matmul(c, b.T)
+d.backward()
+
+print(a.grad)
+```
+
+### Building a Model
+
+```python
+import pysml.nn as nn
+import pysml.nn.functional as F
+
+class SimpleMLP(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.fc1 = nn.Linear(128, 256)
+        self.fc2 = nn.Linear(256, 10)
+
+    def forward(self, x):
+        return self.fc2(F.relu(self.fc1(x)))
+
+model = SimpleMLP()
+optimizer = nn.AdamW(model.parameters(), lr=0.001)
+
+for epoch in range(10):
+    out = model(x)
+    loss = F.cross_entropy(out, y)
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+```
+
+### AMP Training
+
+```python
+from pysml.cuda import backend as cuda_backend
+from pysml.nn.optim import AdamW
+
+model = nn.TransformerLM.from_preset("SMALL")
+optimizer = AdamW(model.parameters(), lr=0.0001)
+
+with cuda_backend.autocast(enabled=True):
+    out = model(x)
+    loss = F.cross_entropy(out, y)
+    loss.backward()
+    optimizer.step()
+```
+
+### Distributed Training
+
+```python
+from pysml.ddp import DataParallelModel
+import pysml.nn as nn
+
+devices = ['cuda:0', 'xpu:0']
+model = nn.TransformerLM.from_preset('MEDIUM')
+dp_model = DataParallelModel(model, devices)
+
+loss = dp_model.forward_and_backward(inputs, targets)
+dp_model.optimizer_step()
+```
 
 ---
 
-## API Notes
+## Backends
 
-### Autograd & Memory
-- Use `with pysml.no_grad():` around weight init / eval paths to **skip graph building**.
-- After `.backward()`, PySML **clears node parents** to release memory; call `tensor.zero_grad()` between steps.
-
-### Optimizers
-- **SGD** supports momentum/Nesterov; **Adam** supports AMSGrad state via `amsgrad=True`.
-- Both perform **in‑place parameter updates** to avoid excess allocations.
-
-### Devices
-- `engine.get_available_devices()` lists detected devices (e.g., `["cpu","cuda:0","xpu:0"]`).  
-- `tensor.to("cuda:0")` or `module.to("xpu:0")` migrates arrays using a single host hop.
+| Backend | Library | Hardware | AMP Support | Status |
+|----------|----------|-----------|--------------|---------|
+| **CPU** | NumPy | Intel / AMD CPUs | No | Stable |
+| **CUDA** | CuPy | NVIDIA GPUs | Yes | Stable |
+| **XPU** | DPNP / DPCTL | Intel Arc / Xe GPUs | Yes | Stable |
 
 ---
 
-## Changelog (0.4.6 → 0.4.8)
+## Architecture
 
-- Reworked `Tensor` (`__slots__`, `no_grad`, safer `.astype`, faster `.clone`)  
-- Leaner `engine` element‑wise ops and reducers  
-- Optimizers rewritten for **in‑place updates** and **fewer temporaries**  
-- Stability fixes in softmax/log/exp paths  
-- README refreshed; version bump to **0.4.8**
-
----
-
-## Examples
-
-Check out comprehensive examples in the repository:
-
-- **Distributed training examples**: Multi-GPU training workflows
-- **Preset model examples**: Using ready-to-use configurations
-- **Custom model examples**: Building models from scratch
-- **Optimization examples**: Learning rate scheduling and advanced techniques
-
----
-
-## Contributing
-
-This is a proprietary research framework for internal use at S.H.I.E.L.D. External contributions are not currently accepted.
-
-For internal contributors:
-1. Follow the existing code style
-2. Add tests for new features
-3. Update documentation
-4. Ensure backward compatibility
-5. Test on all supported backends (CPU/CUDA/XPU)
+```
+PySML/
+│
+├── pysml/
+│   ├── tensor.py
+│   ├── engine.py
+│   ├── nn/
+│   │   ├── module.py
+│   │   ├── functional.py
+│   │   ├── optim.py
+│   │   ├── models.py
+│   │   └── activations.py
+│   ├── ddp/
+│   │   ├── data_parallel.py
+│   │   ├── pipeline_parallel.py
+│   │   ├── device_manager.py
+│   │   └── strategies.py
+│   ├── cuda/
+│   ├── xpu/
+│   └── cpu/
+└── README.md
+```
 
 ---
 
-## License
+## Example Models
 
-**Proprietary License**  
-© 2025 S.H.I.E.L.D.  
-All Rights Reserved
+```python
+from pysml.nn.models import RWKVModel, DiffusionUNet, AudioEncoderDecoder
 
-This software is proprietary and confidential. Unauthorized copying, distribution, or use is strictly prohibited.
+# RWKV LLM
+rwkv = RWKVModel.from_preset("RWKV-1B")
+
+# Image diffusion
+diffusion = DiffusionUNet.from_preset("512x512")
+
+# Audio encoder-decoder
+audio_model = AudioEncoderDecoder.from_preset("BaseSpeech")
+```
 
 ---
 
-## Authors & Acknowledgments
+## Citation
 
-**Primary Development:**
-- S.H.I.E.L.D. Research Division
-
-**Special Thanks:**
-- Intel for DPNP/DPCTL and oneAPI support
-- NVIDIA for CUDA ecosystem
-- NumPy/CuPy communities
+```bibtex
+@software{pysml2025,
+  title = {PySML: Python SHIELD Machine Learning Framework},
+  author = {S.H.I.E.L.D.},
+  year = {2025},
+  version = {0.5-alpha1},
+  organization = {Strategic Homeland Intervention, Enforcement, and Logistics Division},
+  note = {Enterprise Deep Learning Framework with Distributed Training and AMP Support}
+}
+```
 
 ---
 
@@ -160,31 +213,14 @@ This software is proprietary and confidential. Unauthorized copying, distributio
 
 **S.H.I.E.L.D.**  
 Research & Development Division  
-Strategic Homeland Intervention, Enforcement, and Logistics Division
+Strategic Homeland Intervention, Enforcement, and Logistics Division  
 
 For internal inquiries: `research@shieldapi.org`
 
 ---
 
-## Citation
-
-If you use PySML in your research, please cite:
-
-```bibtex
-@software{pysml2025,
-  title = {PySML: Python SHIELD Machine Learning Framework},
-  author = {S.H.I.E.L.D.},
-  year = {2025},
-  version = {0.4.6},
-  organization = {Strategic Homeland Intervention, Enforcement, and Logistics Division},
-  note = {Enterprise Deep Learning Framework with Distributed Training}
-}
-```
-
----
-
 *Built with ❤️ by the S.H.I.E.L.D. Research Team*
 
-PySML represents years of dedication to making deep learning more accessible, flexible, and powerful. We believe that groundbreaking AI research shouldn't be limited by hardware constraints or framework lock-in. Whether you're training on a laptop CPU, a cutting-edge NVIDIA GPU, or Intel's Arc graphics cards, PySML provides the same elegant API and robust performance. Our mission is to empower researchers and engineers to focus on what matters most—pushing the boundaries of what's possible with machine learning. Thank you for being part of this journey with us.
+PySML represents years of dedication to making deep learning more accessible, flexible, and powerful. Whether training on Intel Arc, NVIDIA CUDA, or CPUs, PySML ensures consistent performance and usability. Our mission is to advance AI through distributed, hardware-agnostic innovation.
 
 *Advancing AI through hardware-agnostic innovation and distributed training*
