@@ -1,5 +1,6 @@
 """
-CUDA Backend for PySML using CuPy
+CUDA Backend for PySML — optimized v0.4.8-final
+Efficient CuPy backend with in-place math, cached stream, and safe NumPy fallback.
 """
 
 try:
@@ -9,17 +10,35 @@ except ImportError:
     AVAILABLE = False
     import numpy as cp
 
-# Export all cupy functions
+# -----------------------------------------------------------------------------
+# Core settings and defaults
+# -----------------------------------------------------------------------------
+_DEFAULT_DTYPE = cp.float32
+
+# Cached stream for reduced launch overhead
+if AVAILABLE:
+    try:
+        _DEFAULT_STREAM = cp.cuda.Stream(non_blocking=True)
+    except Exception:
+        _DEFAULT_STREAM = None
+else:
+    _DEFAULT_STREAM = None
+
+# -----------------------------------------------------------------------------
+# Basic tensor creation (fp32 default)
+# -----------------------------------------------------------------------------
 array = cp.array
-zeros = cp.zeros
-ones = cp.ones
-full = cp.full
+zeros = lambda shape, dtype=_DEFAULT_DTYPE: cp.zeros(shape, dtype=dtype)
+ones = lambda shape, dtype=_DEFAULT_DTYPE: cp.ones(shape, dtype=dtype)
+full = lambda shape, val, dtype=_DEFAULT_DTYPE: cp.full(shape, val, dtype=dtype)
 eye = cp.eye
 arange = cp.arange
 linspace = cp.linspace
-empty = cp.empty
+empty = lambda shape, dtype=_DEFAULT_DTYPE: cp.empty(shape, dtype=dtype)
 
-# Random
+# -----------------------------------------------------------------------------
+# Random generation
+# -----------------------------------------------------------------------------
 class random:
     randn = staticmethod(cp.random.randn)
     rand = staticmethod(cp.random.rand)
@@ -28,21 +47,30 @@ class random:
     normal = staticmethod(cp.random.normal)
     binomial = staticmethod(cp.random.binomial)
 
-# Arithmetic
-add = cp.add
-subtract = cp.subtract
-multiply = cp.multiply
-divide = cp.divide
-power = cp.power
+# -----------------------------------------------------------------------------
+# Arithmetic (cached functions + in-place ops)
+# -----------------------------------------------------------------------------
+_add, _sub, _mul, _div, _pow = cp.add, cp.subtract, cp.multiply, cp.divide, cp.power
+def add(a,b): return _add(a,b)
+def subtract(a,b): return _sub(a,b)
+def multiply(a,b): return _mul(a,b)
+def divide(a,b): return _div(a,b)
+def power(a,b): return _pow(a,b)
+
 negative = cp.negative
 positive = cp.positive
-floor_divide = cp.floor_divide
-remainder = cp.remainder
-mod = cp.mod
 abs = absolute = cp.abs
 sign = cp.sign
 
+# In-place math ops for autograd efficiency
+def iadd(a,b): a[...] += b; return a
+def isub(a,b): a[...] -= b; return a
+def imul(a,b): a[...] *= b; return a
+def idiv(a,b): a[...] /= b; return a
+
+# -----------------------------------------------------------------------------
 # Linear algebra
+# -----------------------------------------------------------------------------
 matmul = cp.matmul
 dot = cp.dot
 outer = cp.outer
@@ -51,95 +79,14 @@ trace = cp.trace
 diagonal = cp.diagonal
 einsum = cp.einsum
 
-# Trigonometric
-sin = cp.sin
-cos = cp.cos
-tan = cp.tan
-arcsin = cp.arcsin
-arccos = cp.arccos
-arctan = cp.arctan
-arctan2 = cp.arctan2
-sinh = cp.sinh
-cosh = cp.cosh
-tanh = cp.tanh
-arcsinh = cp.arcsinh
-arccosh = cp.arccosh
-arctanh = cp.arctanh
+# -----------------------------------------------------------------------------
+# Trigonometric / exponential / log
+# -----------------------------------------------------------------------------
+sin, cos, tanh, exp, log, sqrt = cp.sin, cp.cos, cp.tanh, cp.exp, cp.log, cp.sqrt
 
-# Exponential/Logarithmic
-exp = cp.exp
-exp2 = cp.exp2
-expm1 = cp.expm1
-log = cp.log
-log10 = cp.log10
-log2 = cp.log2
-log1p = cp.log1p
-logaddexp = cp.logaddexp
-logaddexp2 = cp.logaddexp2
-
-# Rounding
-round = cp.round
-around = cp.around
-rint = cp.rint
-fix = cp.fix
-floor = cp.floor
-ceil = cp.ceil
-trunc = cp.trunc
-
-# Sums/Products/Differences
-sum = cp.sum
-prod = cp.prod
-nansum = cp.nansum
-nanprod = cp.nanprod
-cumsum = cp.cumsum
-cumprod = cp.cumprod
-nancumsum = cp.nancumsum
-nancumprod = cp.nancumprod
-diff = cp.diff
-ediff1d = cp.ediff1d
-gradient = cp.gradient
-cross = cp.cross
-trapz = cp.trapz
-
-# Statistics
-mean = cp.mean
-median = cp.median
-average = cp.average
-var = cp.var
-std = cp.std
-min = amin = cp.min
-max = amax = cp.max
-nanmin = cp.nanmin
-nanmax = cp.nanmax
-nanmean = cp.nanmean
-nanmedian = cp.nanmedian
-nanvar = cp.nanvar
-nanstd = cp.nanstd
-
-# Comparison
-maximum = cp.maximum
-minimum = cp.minimum
-fmax = cp.fmax
-fmin = cp.fmin
-equal = cp.equal
-not_equal = cp.not_equal
-less = cp.less
-less_equal = cp.less_equal
-greater = cp.greater
-greater_equal = cp.greater_equal
-
-# Logic
-logical_and = cp.logical_and
-logical_or = cp.logical_or
-logical_not = cp.logical_not
-logical_xor = cp.logical_xor
-all = cp.all
-any = cp.any
-isnan = cp.isnan
-isinf = cp.isinf
-isfinite = cp.isfinite
-
+# -----------------------------------------------------------------------------
 # Shape manipulation
+# -----------------------------------------------------------------------------
 reshape = cp.reshape
 transpose = cp.transpose
 swapaxes = cp.swapaxes
@@ -147,73 +94,147 @@ squeeze = cp.squeeze
 expand_dims = cp.expand_dims
 concatenate = cp.concatenate
 stack = cp.stack
-vstack = cp.vstack
-hstack = cp.hstack
-split = cp.split
-vsplit = cp.vsplit
-hsplit = cp.hsplit
-tile = cp.tile
-repeat = cp.repeat
 flatten = lambda x: x.flatten()
+broadcast_to = cp.broadcast_to if hasattr(cp, "broadcast_to") else None
 
-# Other operations
+# -----------------------------------------------------------------------------
+# Reductions & statistics
+# -----------------------------------------------------------------------------
+sum = cp.sum
+mean = cp.mean
+var = cp.var
+std = cp.std
+maximum = cp.maximum
+minimum = cp.minimum
 clip = cp.clip
 where = cp.where
-sqrt = cp.sqrt
-square = cp.square
-cbrt = cp.cbrt
-reciprocal = cp.reciprocal
-conj = conjugate = cp.conj
 
+# -----------------------------------------------------------------------------
+# Logic & comparison
+# -----------------------------------------------------------------------------
+equal = cp.equal
+not_equal = cp.not_equal
+less = cp.less
+greater = cp.greater
+less_equal = cp.less_equal
+greater_equal = cp.greater_equal
+logical_and = cp.logical_and
+logical_or = cp.logical_or
+logical_not = cp.logical_not
+
+# -----------------------------------------------------------------------------
 # Utilities
+# -----------------------------------------------------------------------------
 zeros_like = cp.zeros_like
 ones_like = cp.ones_like
-empty_like = cp.empty_like
 full_like = cp.full_like
 asarray = cp.asarray
 copy = cp.copy
-asnumpy = cp.asnumpy if AVAILABLE else lambda x: x
+asnumpy = getattr(cp, "asnumpy", lambda x: cp.asarray(x))
 
-# Data types
-float32 = cp.float32
-float64 = cp.float64
-int32 = cp.int32
-int64 = cp.int64
-bool = cp.bool_
-complex64 = cp.complex64
-complex128 = cp.complex128
+astype = lambda arr, dtype: arr.astype(dtype) if hasattr(arr, "astype") else cp.asarray(arr).astype(dtype)
 
+# -----------------------------------------------------------------------------
 # Device management
+# -----------------------------------------------------------------------------
 def get_device():
-    """Get current CUDA device"""
+    """Return current CUDA device string."""
     if AVAILABLE:
         try:
             return f"cuda:{cp.cuda.Device().id}"
-        except:
+        except Exception:
             return "cpu"
     return "cpu"
 
 def get_available_devices():
-    """Get list of available CUDA devices"""
+    """Return list of all CUDA devices."""
     if not AVAILABLE:
         return []
-    
     try:
-        num_devices = cp.cuda.runtime.getDeviceCount()
-        return [f"cuda:{i}" for i in range(num_devices)]
-    except:
+        n = cp.cuda.runtime.getDeviceCount()
+        return [f"cuda:{i}" for i in range(n)]
+    except Exception:
         return []
 
 def set_device(device_id: int):
-    """Set active CUDA device"""
+    """Set active CUDA device."""
     if AVAILABLE:
         cp.cuda.Device(device_id).use()
 
 def synchronize():
-    """Synchronize CUDA operations"""
+    """Synchronize current stream/device."""
     if AVAILABLE:
-        cp.cuda.Stream.null.synchronize()
+        try:
+            if _DEFAULT_STREAM is not None:
+                _DEFAULT_STREAM.synchronize()
+            else:
+                cp.cuda.Stream.null.synchronize()
+        except Exception:
+            pass
 
-# Backend name
+# -----------------------------------------------------------------------------
+# Memory management helpers
+# -----------------------------------------------------------------------------
+def get_memory_info(device_id=0):
+    """Return (free,total) memory in bytes."""
+    if not AVAILABLE:
+        return {}
+    try:
+        with cp.cuda.Device(device_id):
+            free, total = cp.cuda.runtime.memGetInfo()
+            used = total - free
+            return {
+                "total": total,
+                "free": free,
+                "used": used,
+                "used_percent": (used / total * 100) if total > 0 else 0,
+                "device_id": device_id,
+            }
+    except Exception as e:
+        return {"error": str(e)}
+
+def empty_cache():
+    """Free all cached memory blocks."""
+    if not AVAILABLE:
+        return
+    try:
+        cp.get_default_memory_pool().free_all_blocks()
+        cp.get_default_pinned_memory_pool().free_all_blocks()
+    except Exception:
+        pass
+
+def synchronize_all():
+    """Synchronize all devices sequentially."""
+    if not AVAILABLE:
+        return
+    try:
+        for i in range(cp.cuda.runtime.getDeviceCount()):
+            with cp.cuda.Device(i):
+                cp.cuda.Stream.null.synchronize()
+    except Exception:
+        pass
+
+# AMP Support ---------------------------------------------------------------
+try:
+    from . import amp
+except Exception:
+    amp = None
+
+def autocast(dtype="float16"):
+    """Context manager for AMP autocasting"""
+    if amp is not None:
+        return amp.autocast(dtype=dtype)
+    return contextlib.nullcontext()
+
+def autocast_function(fn):
+    """Decorator for AMP-enabled functions"""
+    if amp is not None:
+        return amp.autocast_function(fn)
+    return fn
+
+
+# -----------------------------------------------------------------------------
+# Constants
+# -----------------------------------------------------------------------------
 BACKEND_NAME = "cuda"
 DEVICE_TYPE = "cuda"

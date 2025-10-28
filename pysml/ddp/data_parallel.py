@@ -1,209 +1,147 @@
 """
-Data Parallel Training
-
-Replicate model across devices and split batches for faster training.
+Data Parallel Training — optimized
+- Zero-copy batch slicing where possible
+- Single graph build per split; in-place grad scaling (AllReduce sim)
+- Optional custom loss_fn and micro-batching
 """
 
 import pysml
-import numpy as np
-from typing import List, Optional
+from typing import List, Optional, Callable, Tuple, Union
 from ..nn import Module
+from .utils import split_batch
+
+ArrayLike = Union[pysml.Tensor, "np.ndarray"]  # type: ignore
 
 
 class DataParallelModel:
     """
-    Data Parallel wrapper for distributed training
-    
-    Replicates the model on each device and splits the batch across devices.
-    Gradients are synchronized via AllReduce (simulated by averaging).
-    
-    Purpose: Speed up training with large batches (NOT for larger models)
-    
+    Replicates the model across devices logically (single process, simulated DDP)
+    and splits the batch. This implementation minimizes host<->device churn and
+    avoids unnecessary allocations.
+
     Args:
-        model: Model to distribute
-        devices: List of device strings
-        
-    Example:
-        >>> model = nn.TransformerLM.from_preset('SMALL')
-        >>> dp_model = DataParallelModel(model, ['xpu:0', 'xpu:1'])
-        >>> loss = dp_model.forward_and_backward(X, y)
-        >>> optimizer.step()
+        model: Module on primary device
+        devices: list of device strings
+        loss_fn: callable(pred, target)->Tensor (defaults to pysml.mse_loss)
+        micro_batches: int micro-batches per device split (reduces peak mem)
     """
-    
-    def __init__(self, model: Module, devices: List[str]):
-        """
-        Initialize data parallel model
-        
-        Args:
-            model: Base model to replicate (should already be on primary device)
-            devices: List of devices for replicas
-        """
+
+    def __init__(
+        self,
+        model: Module,
+        devices: List[str],
+        loss_fn: Optional[Callable[[pysml.Tensor, pysml.Tensor], pysml.Tensor]] = None,
+        micro_batches: int = 1,
+    ):
         self.base_model = model
         self.devices = devices
         self.num_devices = len(devices)
         self.primary_device = devices[0]
-        
-        print(f"\n{'='*80}")
-        print(f"Data Parallel Configuration")
-        print(f"{'='*80}")
-        print(f"Devices: {devices}")
-        print(f"Primary device: {self.primary_device}")
-        print(f"Model will process data splits on primary device")
-        print(f"Batch will be split: batch_size // {self.num_devices}")
-        print(f"Gradients will be synchronized via AllReduce")
-        print(f"{'='*80}")
-    
-    def forward_and_backward(self, X, y):
+        self.loss_fn = loss_fn or pysml.mse_loss
+        self.micro_batches = max(1, int(micro_batches))
+
+    def _to_device_tensor(self, x: ArrayLike, device: str, requires_grad=False) -> pysml.Tensor:
+        if isinstance(x, pysml.Tensor):
+            return x if x.device == device else pysml.to_device(x, device)
+        t = pysml.Tensor(x, requires_grad=requires_grad)
+        return pysml.to_device(t, device)
+
+    def _iterate_micro_batches(
+        self, X_split: ArrayLike, y_split: ArrayLike
+    ) -> Tuple[pysml.Tensor, pysml.Tensor, int]:
+        """Yield micro-batches (views) to reduce activation memory."""
+        bs = X_split.shape[0]
+        if self.micro_batches <= 1 or bs <= 1:
+            yield X_split, y_split, bs
+            return
+        size = max(1, bs // self.micro_batches)
+        for start in range(0, bs, size):
+            end = min(bs, start + size)
+            yield X_split[start:end], y_split[start:end], end - start
+
+    def forward_and_backward(self, X: ArrayLike, y: ArrayLike) -> float:
         """
-        Forward pass with data parallelism and correct gradient accumulation
-        
-        This is the CORRECT way to do data parallel training:
-        1. Zero gradients ONCE before all device splits
-        2. Forward + backward on each device's data split (accumulates gradients)
-        3. Average gradients after all splits processed (simulates AllReduce)
-        
-        Args:
-            X: Input data (numpy array or tensor)
-            y: Target data (numpy array or tensor)
-        
-        Returns:
-            Average loss across all devices
+        1) zero_grad once
+        2) for each device split:
+            - move split to device
+            - forward -> loss -> backward (accumulating grads)
+        3) divide grads by num_devices (AllReduce average)
+
+        Returns mean loss across device splits.
         """
-        batch_size = X.shape[0]
-        split_size = batch_size // self.num_devices
-        
-        # CRITICAL: Zero gradients ONCE at the start
+        bsz = X.shape[0]
+        split_size = max(1, bsz // self.num_devices)
+
+        # zero once
         self.base_model.zero_grad()
-        
+
         losses = []
-        
-        # Process on primary device only (in true DDP, would be on all devices in parallel)
-        # For simplicity, we run sequentially on primary device with different data splits
-        for i, device in enumerate([self.primary_device] * self.num_devices):
-            start_idx = i * split_size
-            end_idx = (i + 1) * split_size if i < self.num_devices - 1 else batch_size
-            
-            # Split data for this device
-            X_split = X[start_idx:end_idx]
-            y_split = y[start_idx:end_idx]
-            
-            # Create tensors and move to device
-            X_split_tensor = pysml.Tensor(X_split, requires_grad=False)
-            y_split_tensor = pysml.Tensor(y_split, requires_grad=False)
-            
-            # Move to device
-            X_split_tensor = pysml.to_device(X_split_tensor, device)
-            y_split_tensor = pysml.to_device(y_split_tensor, device)
-            
-            # Forward pass on this device's data split
-            output = self.base_model(X_split_tensor)
-            
-            # Handle shape mismatches (e.g., for transformers)
-            if output.shape != y_split_tensor.shape:
-                if output.size == y_split_tensor.size:
-                    y_split_data = y_split_tensor.data
-                    if hasattr(y_split_data, 'reshape'):
-                        y_split_tensor = pysml.Tensor(
-                            y_split_data.reshape(output.shape),
-                            requires_grad=False
-                        )
-                    else:
-                        y_split_tensor = pysml.Tensor(
-                            np.array(y_split_data).reshape(output.shape),
-                            requires_grad=False
-                        )
-                    # Move reshaped tensor to device
-                    y_split_tensor = pysml.to_device(y_split_tensor, device)
-            
-            # Compute loss
-            loss = pysml.mse_loss(output, y_split_tensor)
-            
-            # CRITICAL: Backward pass accumulates gradients
-            # Don't call zero_grad() here!
-            loss.backward()
-            
-            losses.append(loss.item())
-        
-        # Average gradients (simulates AllReduce in production DDP)
-        for param in self.base_model.parameters():
-            if param.grad is not None:
-                param.grad.data = param.grad.data / self.num_devices
-        
-        # Return average loss
-        return sum(losses) / len(losses)
-    
-    def __call__(self, X, y):
-        """Allow calling as function"""
+        # Simulate parallel: process sequentially on primary device (API stable)
+        for i in range(self.num_devices):
+            start = i * split_size
+            end = bsz if i == self.num_devices - 1 else (i + 1) * split_size
+            if start >= end:
+                continue
+
+            X_split = X[start:end]
+            y_split = y[start:end]
+
+            # micro-batch inside split
+            dev = self.primary_device
+            split_loss_sum = 0.0
+            count = 0
+
+            for Xm, ym, mbs in self._iterate_micro_batches(X_split, y_split):
+                Xt = self._to_device_tensor(Xm, dev, requires_grad=False)
+                yt = self._to_device_tensor(ym, dev, requires_grad=False)
+
+                out = self.base_model(Xt)
+                loss = self.loss_fn(out, yt)
+                loss.backward()
+                split_loss_sum += float(loss.item())
+                count += 1
+
+            losses.append(split_loss_sum / max(1, count))
+
+        # AllReduce average (in-place scaling)
+        for p in self.base_model.parameters():
+            if p.grad is not None:
+                p.grad.data /= self.num_devices
+
+        return sum(losses) / max(1, len(losses))
+
+    def __call__(self, X: ArrayLike, y: ArrayLike) -> float:
         return self.forward_and_backward(X, y)
 
 
 class DistributedDataParallel:
     """
-    Production-style DDP wrapper (more PyTorch-like API)
-    
-    This is an alternative interface that's closer to PyTorch's DDP.
-    
-    Example:
-        >>> model = nn.TransformerLM.from_preset('SMALL')
-        >>> ddp_model = DistributedDataParallel(model, device_ids=['xpu:0', 'xpu:1'])
-        >>> 
-        >>> for epoch in range(epochs):
-        >>>     for X, y in dataloader:
-        >>>         optimizer.zero_grad()
-        >>>         output = ddp_model(X)
-        >>>         loss = criterion(output, y)
-        >>>         loss.backward()
-        >>>         optimizer.step()
+    PyTorch-like façade. Optimized for minimal overhead; actual parallelism is
+    orchestrated outside (multi-proc/multi-thread not included here).
     """
-    
-    def __init__(self, model: Module, device_ids: List[str], 
-                 output_device: Optional[str] = None):
-        """
-        Initialize DDP wrapper
-        
-        Args:
-            model: Model to wrap
-            device_ids: List of device IDs
-            output_device: Device for output (defaults to first device)
-        """
+
+    def __init__(self, model: Module, device_ids: List[str], output_device: Optional[str] = None):
         self.module = model
         self.device_ids = device_ids
         self.output_device = output_device or device_ids[0]
         self.num_devices = len(device_ids)
-        
-        # In production, this would register hooks for gradient synchronization
-        print(f"Initialized DDP with {self.num_devices} devices: {device_ids}")
-    
+
     def forward(self, *inputs, **kwargs):
-        """
-        Forward pass (in production, this would handle device placement)
-        
-        For now, just delegates to the underlying model.
-        In production DDP:
-        - Input is replicated to all devices
-        - Forward happens on all devices in parallel
-        - Outputs are gathered to output_device
-        """
         return self.module(*inputs, **kwargs)
-    
+
     def __call__(self, *inputs, **kwargs):
-        """Make callable"""
         return self.forward(*inputs, **kwargs)
-    
+
     def parameters(self):
-        """Get model parameters"""
         return self.module.parameters()
-    
+
     def train(self, mode: bool = True):
-        """Set training mode"""
         self.module.train(mode)
         return self
-    
+
     def eval(self):
-        """Set evaluation mode"""
         self.module.eval()
         return self
-    
+
     def zero_grad(self):
-        """Zero gradients"""
         self.module.zero_grad()

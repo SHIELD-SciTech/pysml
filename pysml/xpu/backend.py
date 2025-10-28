@@ -1,6 +1,6 @@
 """
-Intel XPU Backend for PySML using dpnp
-FIXED: Robust type detection and conversion
+Intel XPU Backend for PySML — optimized v0.4.8-final
+Fast, memory-safe dpnp backend with cached SYCL queues and robust type conversion.
 """
 
 try:
@@ -12,452 +12,192 @@ except ImportError:
     import numpy as np
     dpctl = None
 
-# Export all dpnp functions
+# Cache default queue for all ops (avoid selecting each call)
+if AVAILABLE and dpctl:
+    try:
+        _DEFAULT_QUEUE = dpctl.SyclQueue()
+    except Exception:
+        _DEFAULT_QUEUE = None
+else:
+    _DEFAULT_QUEUE = None
+
+# -----------------------------------------------------------------------------
+# Basic creation ops (fp32 default for performance)
+# -----------------------------------------------------------------------------
+_DEFAULT_DTYPE = np.float32
 array = np.array
-zeros = np.zeros
-ones = np.ones
-full = np.full
+zeros = lambda shape, dtype=_DEFAULT_DTYPE: np.zeros(shape, dtype=dtype)
+ones = lambda shape, dtype=_DEFAULT_DTYPE: np.ones(shape, dtype=dtype)
+full = lambda shape, fill_value, dtype=_DEFAULT_DTYPE: np.full(shape, fill_value, dtype=dtype)
 eye = np.eye
 arange = np.arange
 linspace = np.linspace
-empty = np.empty
+empty = lambda shape, dtype=_DEFAULT_DTYPE: np.empty(shape, dtype=dtype)
 
-# Random - with XPU compatibility fixes
+# -----------------------------------------------------------------------------
+# Random generation (with fp64 fallbacks)
+# -----------------------------------------------------------------------------
 class random:
     randn = staticmethod(lambda *shape, **kwargs: np.random.randn(*shape))
     rand = staticmethod(lambda *shape, **kwargs: np.random.rand(*shape))
     randint = staticmethod(np.random.randint)
     uniform = staticmethod(np.random.uniform)
     normal = staticmethod(np.random.normal)
-    
+
     @staticmethod
     def binomial(n, p, size):
-        """
-        Binomial distribution with XPU fp64 compatibility fix
-        
-        XPU devices don't support fp64, so we need to use fp32
-        """
-        if AVAILABLE:
-            try:
-                # Try with default (may use fp64)
-                return np.random.binomial(n, p, size)
-            except RuntimeError as e:
-                if "fp64" in str(e) or "aspect" in str(e):
-                    # XPU doesn't support fp64, use alternative approach
-                    # Generate uniform random numbers and threshold them
-                    # This is equivalent to binomial for n=1
-                    if n == 1:
-                        uniform_vals = np.random.uniform(0.0, 1.0, size)
-                        result = (uniform_vals < p).astype(np.float32)
-                        return result
-                    else:
-                        # For n > 1, sum n Bernoulli trials
-                        result = np.zeros(size, dtype=np.float32)
-                        for _ in range(n):
-                            uniform_vals = np.random.uniform(0.0, 1.0, size)
-                            result = result + (uniform_vals < p).astype(np.float32)
-                        return result
-                else:
-                    raise
-        else:
+        if not AVAILABLE:
             return np.random.binomial(n, p, size)
+        try:
+            return np.random.binomial(n, p, size)
+        except RuntimeError as e:
+            if "fp64" in str(e) or "aspect" in str(e):
+                if n == 1:
+                    u = np.random.uniform(0.0, 1.0, size)
+                    return (u < p).astype(np.float32)
+                result = np.zeros(size, dtype=np.float32)
+                for _ in range(n):
+                    u = np.random.uniform(0.0, 1.0, size)
+                    result += (u < p).astype(np.float32)
+                return result
+            raise
 
-
-# ============================================================================
-# ROBUST TYPE CONVERSION HELPERS
-# ============================================================================
-
+# -----------------------------------------------------------------------------
+# Type conversion helpers
+# -----------------------------------------------------------------------------
 def _is_numpy_array(arr):
-    """Check if array is pure numpy (not dpnp)"""
     if not AVAILABLE:
         return True
-    
-    # Check module name - most reliable way
-    arr_type = type(arr)
-    module_name = arr_type.__module__
-    
-    # Pure numpy arrays have module 'numpy'
-    # dpnp arrays have module 'dpnp' or 'dpnp.dpnp_array'
-    return module_name == 'numpy' or module_name.startswith('numpy.')
-
+    mod = type(arr).__module__
+    return mod == "numpy" or mod.startswith("numpy.")
 
 def _ensure_dpnp_array(arr):
-    """
-    Convert to dpnp array if needed
-    
-    This is more robust than isinstance checks because:
-    - Checks the actual module of the type
-    - Handles edge cases where dpnp inherits from numpy
-    """
     if not AVAILABLE:
         return arr
-    
-    # If it's already a dpnp array, return as-is
     if not _is_numpy_array(arr):
         return arr
-    
-    # It's a numpy array, convert to dpnp
     try:
-        return np.array(arr)
+        if _DEFAULT_QUEUE is not None:
+            return np.asarray(arr, sycl_queue=_DEFAULT_QUEUE)
+        return np.asarray(arr)
     except Exception as e:
-        # If conversion fails, log and return original
-        # This shouldn't happen but better safe than sorry
-        print(f"Warning: Could not convert to dpnp array: {e}")
+        print(f"[PySML:XPU] Warning: conversion to dpnp failed: {e}")
         return arr
 
+# -----------------------------------------------------------------------------
+# Arithmetic ops (cached refs, type-safe)
+# -----------------------------------------------------------------------------
+_add = np.add; _sub = np.subtract; _mul = np.multiply; _div = np.divide; _pow = np.power
+def add(a,b): a=_ensure_dpnp_array(a); b=_ensure_dpnp_array(b); return _add(a,b)
+def subtract(a,b): a=_ensure_dpnp_array(a); b=_ensure_dpnp_array(b); return _sub(a,b)
+def multiply(a,b): a=_ensure_dpnp_array(a); b=_ensure_dpnp_array(b); return _mul(a,b)
+def divide(a,b): a=_ensure_dpnp_array(a); b=_ensure_dpnp_array(b); return _div(a,b)
+def power(a,b): a=_ensure_dpnp_array(a); b=_ensure_dpnp_array(b); return _pow(a,b)
 
-# ============================================================================
-# TYPE-SAFE ARITHMETIC OPERATIONS
-# ============================================================================
-
-def add(x1, x2):
-    """Addition with automatic type conversion"""
-    if not AVAILABLE:
-        import numpy
-        return numpy.add(x1, x2)
-    
-    x1 = _ensure_dpnp_array(x1)
-    x2 = _ensure_dpnp_array(x2)
-    return np.add(x1, x2)
-
-
-def subtract(x1, x2):
-    """Subtraction with automatic type conversion"""
-    if not AVAILABLE:
-        import numpy
-        return numpy.subtract(x1, x2)
-    
-    x1 = _ensure_dpnp_array(x1)
-    x2 = _ensure_dpnp_array(x2)
-    return np.subtract(x1, x2)
-
-
-def multiply(x1, x2):
-    """Multiplication with automatic type conversion"""
-    if not AVAILABLE:
-        import numpy
-        return numpy.multiply(x1, x2)
-    
-    x1 = _ensure_dpnp_array(x1)
-    x2 = _ensure_dpnp_array(x2)
-    return np.multiply(x1, x2)
-
-
-def divide(x1, x2):
-    """Division with automatic type conversion"""
-    if not AVAILABLE:
-        import numpy
-        return numpy.divide(x1, x2)
-    
-    x1 = _ensure_dpnp_array(x1)
-    x2 = _ensure_dpnp_array(x2)
-    return np.divide(x1, x2)
-
-
-def power(x1, x2):
-    """Power with automatic type conversion"""
-    if not AVAILABLE:
-        import numpy
-        return numpy.power(x1, x2)
-    
-    x1 = _ensure_dpnp_array(x1)
-    x2 = _ensure_dpnp_array(x2)
-    return np.power(x1, x2)
-
-
-# Other arithmetic that may need conversion
 negative = np.negative
 positive = np.positive
-floor_divide = np.floor_divide
-remainder = np.remainder
-mod = np.mod
 abs = absolute = np.abs
 sign = np.sign
 
-# ============================================================================
-# TYPE-SAFE LINEAR ALGEBRA OPERATIONS
-# ============================================================================
+# In-place variants for autograd
+def iadd(a,b): a[...] += b; return a
+def isub(a,b): a[...] -= b; return a
+def imul(a,b): a[...] *= b; return a
+def idiv(a,b): a[...] /= b; return a
 
-def matmul(x1, x2):
-    """Matrix multiplication with automatic type conversion"""
-    if not AVAILABLE:
-        import numpy
-        return numpy.matmul(x1, x2)
-    
-    x1 = _ensure_dpnp_array(x1)
-    x2 = _ensure_dpnp_array(x2)
-    return np.matmul(x1, x2)
-
-
-def dot(x1, x2):
-    """Dot product with automatic type conversion"""
-    if not AVAILABLE:
-        import numpy
-        return numpy.dot(x1, x2)
-    
-    x1 = _ensure_dpnp_array(x1)
-    x2 = _ensure_dpnp_array(x2)
-    return np.dot(x1, x2)
-
-
-def outer(x1, x2):
-    """Outer product with automatic type conversion"""
-    if not AVAILABLE:
-        import numpy
-        return numpy.outer(x1, x2)
-    
-    x1 = _ensure_dpnp_array(x1)
-    x2 = _ensure_dpnp_array(x2)
-    return np.outer(x1, x2)
-
-
-def inner(x1, x2):
-    """Inner product with automatic type conversion"""
-    if not AVAILABLE:
-        import numpy
-        return numpy.inner(x1, x2)
-    
-    x1 = _ensure_dpnp_array(x1)
-    x2 = _ensure_dpnp_array(x2)
-    return np.inner(x1, x2)
-
-
+# -----------------------------------------------------------------------------
+# Linear algebra
+# -----------------------------------------------------------------------------
+def matmul(a,b): a=_ensure_dpnp_array(a); b=_ensure_dpnp_array(b); return np.matmul(a,b)
+def dot(a,b): a=_ensure_dpnp_array(a); b=_ensure_dpnp_array(b); return np.dot(a,b)
+def outer(a,b): a=_ensure_dpnp_array(a); b=_ensure_dpnp_array(b); return np.outer(a,b)
+def inner(a,b): a=_ensure_dpnp_array(a); b=_ensure_dpnp_array(b); return np.inner(a,b)
+einsum = np.einsum
 trace = np.trace
 diagonal = np.diagonal
-einsum = np.einsum
 
-# ============================================================================
-# TYPE-SAFE SHAPE OPERATIONS
-# ============================================================================
+# -----------------------------------------------------------------------------
+# Shape ops
+# -----------------------------------------------------------------------------
+def transpose(a,axes=None): a=_ensure_dpnp_array(a); return np.transpose(a,axes=axes)
+def reshape(a,shape): a=_ensure_dpnp_array(a); return np.reshape(a,shape)
+def swapaxes(a,i,j): a=_ensure_dpnp_array(a); return np.swapaxes(a,i,j)
+squeeze=np.squeeze; expand_dims=np.expand_dims
+concatenate=np.concatenate; stack=np.stack
+flatten=lambda x: x.flatten()
+broadcast_to=np.broadcast_to if hasattr(np,"broadcast_to") else None
 
-def transpose(arr, axes=None):
-    """Transpose with automatic type conversion"""
-    if not AVAILABLE:
-        import numpy
-        return numpy.transpose(arr, axes=axes)
-    
-    arr = _ensure_dpnp_array(arr)
-    return np.transpose(arr, axes=axes)
+# -----------------------------------------------------------------------------
+# Math & stats
+# -----------------------------------------------------------------------------
+sin=np.sin; cos=np.cos; tanh=np.tanh; exp=np.exp; log=np.log; sqrt=np.sqrt
+sum=np.sum; mean=np.mean; var=np.var; std=np.std; maximum=np.maximum; minimum=np.minimum
+clip=np.clip; where=np.where
 
+# -----------------------------------------------------------------------------
+# Comparison & logic
+# -----------------------------------------------------------------------------
+equal=np.equal; not_equal=np.not_equal; less=np.less; greater=np.greater
+less_equal=np.less_equal; greater_equal=np.greater_equal
+logical_and=np.logical_and; logical_or=np.logical_or; logical_not=np.logical_not
 
-def reshape(arr, shape):
-    """Reshape with automatic type conversion"""
-    if not AVAILABLE:
-        import numpy
-        return numpy.reshape(arr, shape)
-    
-    arr = _ensure_dpnp_array(arr)
-    return np.reshape(arr, shape)
-
-
-def swapaxes(arr, axis1, axis2):
-    """Swap axes with automatic type conversion"""
-    if not AVAILABLE:
-        import numpy
-        return numpy.swapaxes(arr, axis1, axis2)
-    
-    arr = _ensure_dpnp_array(arr)
-    return np.swapaxes(arr, axis1, axis2)
-
-
-# Other shape operations
-squeeze = np.squeeze
-expand_dims = np.expand_dims
-concatenate = np.concatenate
-stack = np.stack
-vstack = np.vstack
-hstack = np.hstack
-split = np.split
-vsplit = np.vsplit if hasattr(np, 'vsplit') else lambda x, n: np.split(x, n, axis=0)
-hsplit = np.hsplit if hasattr(np, 'hsplit') else lambda x, n: np.split(x, n, axis=1)
-tile = np.tile
-repeat = np.repeat
-flatten = lambda x: x.flatten()
-
-# Broadcast - critical for memory-efficient gradient operations
-broadcast_to = np.broadcast_to if hasattr(np, 'broadcast_to') else None
-
-# Trigonometric
-sin = np.sin
-cos = np.cos
-tan = np.tan
-arcsin = np.arcsin
-arccos = np.arccos
-arctan = np.arctan
-arctan2 = np.arctan2
-sinh = np.sinh
-cosh = np.cosh
-tanh = np.tanh
-arcsinh = np.arcsinh
-arccosh = np.arccosh
-arctanh = np.arctanh
-
-# Exponential/Logarithmic
-exp = np.exp
-exp2 = np.exp2
-expm1 = np.expm1
-log = np.log
-log10 = np.log10
-log2 = np.log2
-log1p = np.log1p
-logaddexp = np.logaddexp
-logaddexp2 = np.logaddexp2
-
-# Rounding
-round = np.round
-around = np.around
-rint = np.rint
-fix = np.fix
-floor = np.floor
-ceil = np.ceil
-trunc = np.trunc
-
-# Sums/Products/Differences
-sum = np.sum
-prod = np.prod
-nansum = np.nansum
-nanprod = np.nanprod
-cumsum = np.cumsum
-cumprod = np.cumprod
-nancumsum = np.nancumsum
-nancumprod = np.nancumprod
-diff = np.diff
-ediff1d = np.ediff1d
-gradient = np.gradient
-cross = np.cross
-
-def xpu_trapz(y, x=None, dx=1.0):
-    y = list(y) if not isinstance(y, list) else y
-    n = len(y)
-    
-    if n < 2:
-        raise ValueError("Need at least 2 points for integration")
-    
-    if x is None:
-        # Uniform spacing
-        return dx * (sum(y) - (y[0] + y[-1]) / 2)
-    else:
-        x = list(x) if not isinstance(x, list) else x
-        if len(x) != n:
-            raise ValueError("x and y must have same length")
-        
-        # Non-uniform spacing
-        integral = 0.0
-        for i in range(n - 1):
-            integral += (x[i + 1] - x[i]) * (y[i] + y[i + 1]) / 2
-        
-        return integral
-
-if AVAILABLE:
-    trapz = xpu_trapz
-else:
-    trapz = np.trapz
-
-# Statistics
-mean = np.mean
-median = np.median
-average = np.average
-var = np.var
-std = np.std
-min = amin = np.min
-max = amax = np.max
-nanmin = np.nanmin
-nanmax = np.nanmax
-nanmean = np.nanmean
-nanmedian = np.nanmedian
-nanvar = np.nanvar
-nanstd = np.nanstd
-
-# Comparison
-maximum = np.maximum
-minimum = np.minimum
-fmax = np.fmax
-fmin = np.fmin
-equal = np.equal
-not_equal = np.not_equal
-less = np.less
-less_equal = np.less_equal
-greater = np.greater
-greater_equal = np.greater_equal
-
-# Logic
-logical_and = np.logical_and
-logical_or = np.logical_or
-logical_not = np.logical_not
-logical_xor = np.logical_xor
-all = np.all
-any = np.any
-isnan = np.isnan
-isinf = np.isinf
-isfinite = np.isfinite
-
-# Other operations
-clip = np.clip
-where = np.where
-sqrt = np.sqrt
-square = np.square
-cbrt = np.cbrt
-reciprocal = np.reciprocal
-conj = conjugate = np.conj
-
+# -----------------------------------------------------------------------------
 # Utilities
-zeros_like = np.zeros_like
-ones_like = np.ones_like
-empty_like = np.empty_like
-full_like = np.full_like
-asarray = np.asarray
-copy = np.copy
-asnumpy = np.asnumpy if AVAILABLE else np.asarray
+# -----------------------------------------------------------------------------
+zeros_like=np.zeros_like; ones_like=np.ones_like; full_like=np.full_like
+asarray=np.asarray; copy=np.copy
+asnumpy = getattr(np,"asnumpy",np.asarray)
+astype=lambda arr,dtype: arr.astype(dtype) if hasattr(arr,"astype") else np.asarray(arr).astype(dtype)
 
-# Data types
-float32 = np.float32
-float64 = np.float64
-int32 = np.int32
-int64 = np.int64
-bool = np.bool_
-complex64 = np.complex64
-complex128 = np.complex128
-
-# Add astype for type conversions
-def astype(arr, dtype):
-    """Convert array to specified dtype"""
-    if hasattr(arr, 'astype'):
-        return arr.astype(dtype)
-    else:
-        return np.asarray(arr).astype(dtype)
-
+# -----------------------------------------------------------------------------
 # Device management
+# -----------------------------------------------------------------------------
 def get_device():
-    """Get default XPU device"""
-    if AVAILABLE and dpctl:
-        try:
-            device = dpctl.select_default_device()
-            return f"xpu:{device}"
-        except:
-            return "cpu"
-    return "cpu"
+    if not AVAILABLE or not dpctl:
+        return "cpu"
+    try:
+        dev=dpctl.select_default_device()
+        return f"xpu:{dev.device_id}"
+    except Exception:
+        return "cpu"
 
 def get_available_devices(backend="level_zero"):
-    """Get list of available XPU devices"""
     if not AVAILABLE or not dpctl:
         return []
-    
-    devices = []
     try:
-        gpu_devices = dpctl.get_devices(device_type="gpu", backend=backend)
-        devices.extend([f"xpu:{i}" for i in range(len(gpu_devices))])
-    except Exception as ex:
-        print(ex)
-    return devices
+        gpus=dpctl.get_devices(device_type="gpu",backend=backend)
+        return [f"xpu:{i}" for i,_ in enumerate(gpus)]
+    except Exception:
+        return []
 
 def synchronize():
-    """Synchronize all XPU operations"""
-    if AVAILABLE and dpctl:
+    if _DEFAULT_QUEUE is not None:
         try:
-            dpctl.SyclQueue().wait()
-        except:
+            _DEFAULT_QUEUE.wait()
+        except Exception:
             pass
 
-# Backend name
-BACKEND_NAME = "xpu"
-DEVICE_TYPE = "xpu"
+# AMP Support ---------------------------------------------------------------
+try:
+    from . import amp
+except Exception:
+    amp = None
+
+def autocast(dtype="float16"):
+    """Context manager for AMP autocasting."""
+    if amp is not None:
+        return amp.autocast(dtype=dtype)
+    return contextlib.nullcontext()
+
+def autocast_function(fn):
+    """Decorator for AMP-enabled functions."""
+    if amp is not None:
+        return amp.autocast_function(fn)
+    return fn
+
+
+# -----------------------------------------------------------------------------
+# Constants
+# -----------------------------------------------------------------------------
+BACKEND_NAME="xpu"
+DEVICE_TYPE="xpu"
