@@ -2373,7 +2373,7 @@ for i, batch in enumerate(dataloader):
 - [What's New in v0.4.9c](#whats-new-in-v049c)
 - [Memory Optimization](#memory-optimization-impact)
 - [Complete Examples](#complete-examples)
-- [Saving and Loading](#save-load)
+- [Saving and Loading](#saving-and-loading)
 - [API Reference](#api-reference)
 - [Performance Benchmarks](#performance-benchmarks)
 - [Device Management](#device-management)
