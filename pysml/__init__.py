@@ -45,6 +45,13 @@ from . import xpu
 from . import cuda
 from . import cpu
 
+from .save_load import (
+	save, load,
+	save_state_dict, load_state_dict,
+	save_checkpoint, load_checkpoint,
+	get_model_size, save_model_info
+)
+
 __all__ = [
 	'Tensor', 'dtype',
 	'add', 'subtract', 'multiply', 'divide', 'power',
