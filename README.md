@@ -1012,6 +1012,469 @@ for epoch in range(100):
 
 ---
 
+## Saving and Loading
+
+### 1. Save/Load Entire Model
+
+```python
+import pysml
+
+# Save entire model (architecture + weights)
+model = MyModel()
+pysml.save(model, 'model.pysml')
+
+# Load entire model
+model = pysml.load('model.pysml')
+```
+
+### 2. Save/Load State Dictionary (Recommended)
+
+```python
+import pysml
+
+# Save only weights
+model = MyModel()
+pysml.save_state_dict(model, 'model_weights.pysml')
+
+# Load weights into existing model
+model = MyModel()
+pysml.load_state_dict(model, 'model_weights.pysml')
+```
+
+### 3. Save/Load Training Checkpoint
+
+```python
+import pysml
+
+# Save checkpoint with training state
+pysml.save_checkpoint(
+    model, 
+    optimizer, 
+    'checkpoint_epoch10.pysml',
+    epoch=10,
+    loss=0.5,
+    best_accuracy=0.95,
+    learning_rate=0.001
+)
+
+# Load checkpoint and resume training
+model = MyModel()
+optimizer = pysml.nn.AdamW(model.parameters())
+
+checkpoint = pysml.load_checkpoint(model, optimizer, 'checkpoint_epoch10.pysml')
+
+start_epoch = checkpoint['epoch'] + 1
+best_acc = checkpoint['best_accuracy']
+print(f"Resuming from epoch {start_epoch}")
+```
+
+## Complete Examples
+
+### Example 1: Basic Training with Checkpointing
+
+```python
+import pysml
+from pysml import nn
+
+class MyModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.fc1 = nn.Linear(784, 256)
+        self.fc2 = nn.Linear(256, 10)
+    
+    def forward(self, x):
+        x = nn.ReLU()(self.fc1(x))
+        return self.fc2(x)
+
+# Initialize
+model = MyModel()
+optimizer = nn.AdamW(model.parameters(), lr=0.001)
+criterion = nn.CrossEntropyLoss()
+
+best_loss = float('inf')
+
+# Training loop with checkpointing
+for epoch in range(100):
+    total_loss = 0
+    
+    for batch in dataloader:
+        optimizer.zero_grad()
+        outputs = model(batch['data'])
+        loss = criterion(outputs, batch['labels'])
+        loss.backward()
+        optimizer.step()
+        
+        total_loss += loss.item()
+    
+    avg_loss = total_loss / len(dataloader)
+    print(f"Epoch {epoch}: Loss = {avg_loss:.4f}")
+    
+    # Save checkpoint every 10 epochs
+    if epoch % 10 == 0:
+        pysml.save_checkpoint(
+            model, optimizer, f'checkpoint_epoch{epoch}.pysml',
+            epoch=epoch,
+            loss=avg_loss
+        )
+    
+    # Save best model
+    if avg_loss < best_loss:
+        best_loss = avg_loss
+        pysml.save_state_dict(model, 'best_model.pysml')
+        print(f"Saved best model at epoch {epoch}")
+
+# Save final model
+pysml.save_state_dict(model, 'final_model.pysml')
+```
+
+### Example 2: Resume Training from Checkpoint
+
+```python
+import pysml
+from pysml import nn
+
+# Initialize model and optimizer
+model = MyModel()
+optimizer = nn.AdamW(model.parameters(), lr=0.001)
+
+# Load checkpoint
+checkpoint_path = 'checkpoint_epoch30.pysml'
+checkpoint = pysml.load_checkpoint(model, optimizer, checkpoint_path)
+
+# Resume training from checkpoint
+start_epoch = checkpoint['epoch'] + 1
+best_loss = checkpoint['loss']
+
+print(f"Resuming training from epoch {start_epoch}")
+print(f"Previous loss: {best_loss:.4f}")
+
+# Continue training
+for epoch in range(start_epoch, 100):
+    # ... training code ...
+    pass
+```
+
+### Example 3: Transfer Learning
+
+```python
+import pysml
+
+# Load pretrained model
+pretrained_model = pysml.load('pretrained_model.pysml')
+
+# Create new model with same architecture
+model = MyModel()
+
+# Load pretrained weights (except last layer)
+pretrained_state = pretrained_model.state_dict()
+
+# Remove last layer from state dict
+pretrained_state.pop('fc2.weight')
+pretrained_state.pop('fc2.bias')
+
+# Load partial state dict
+model.load_state_dict(pretrained_state, strict=False)
+
+# Freeze pretrained layers
+for name, param in model.named_parameters():
+    if 'fc2' not in name:
+        param._requires_grad = False
+        param.data._requires_grad = False
+
+# Train only the last layer
+trainable_params = [p for p in model.parameters() if p.requires_grad]
+optimizer = pysml.nn.AdamW(trainable_params, lr=0.001)
+```
+
+### Example 4: Save Multiple Models
+
+```python
+import pysml
+
+# Train multiple models
+generator = GeneratorModel()
+discriminator = DiscriminatorModel()
+
+gen_optimizer = pysml.nn.Adam(generator.parameters(), lr=0.0002)
+disc_optimizer = pysml.nn.Adam(discriminator.parameters(), lr=0.0002)
+
+# ... training code ...
+
+# Save both models and optimizers
+checkpoint = {
+    'generator_state': generator.state_dict(),
+    'discriminator_state': discriminator.state_dict(),
+    'gen_optimizer': gen_optimizer.state_dict(),
+    'disc_optimizer': disc_optimizer.state_dict(),
+    'epoch': epoch,
+}
+
+pysml.save(checkpoint, 'gan_checkpoint.pysml')
+
+# Load both models
+checkpoint = pysml.load('gan_checkpoint.pysml')
+
+generator = GeneratorModel()
+discriminator = DiscriminatorModel()
+
+generator.load_state_dict(checkpoint['generator_state'])
+discriminator.load_state_dict(checkpoint['discriminator_state'])
+```
+
+### Example 5: Device Mapping
+
+```python
+import pysml
+
+# Train on GPU
+model = MyModel().to('cuda:0')
+# ... training ...
+pysml.save_state_dict(model, 'model_gpu.pysml')
+
+# Load to CPU for inference
+model_cpu = MyModel()
+pysml.load_state_dict(model_cpu, 'model_gpu.pysml', map_location='cpu')
+
+# Load to different GPU
+model_gpu1 = MyModel()
+pysml.load_state_dict(model_gpu1, 'model_gpu.pysml', map_location='cuda:1')
+```
+
+### Example 6: Model Information
+
+```python
+import pysml
+
+model = MyModel()
+
+# Get model size info
+info = pysml.get_model_size(model)
+
+print(f"Total parameters: {info['total_params']:,}")
+print(f"Trainable parameters: {info['trainable_params']:,}")
+print(f"Model size: {info['memory_mb']:.2f} MB")
+
+# Save model info to JSON
+pysml.save_model_info(model, 'model_info.json')
+```
+
+### Example 7: PyTorch Compatibility
+
+```python
+import pysml
+
+# PySML uses PyTorch-compatible format
+# You can use torch.save/torch.load aliases
+model = MyModel()
+
+# These are equivalent
+pysml.save(model.state_dict(), 'model.pysml')
+pysml.torch_save(model.state_dict(), 'model.pysml')
+
+# Load with either function
+state = pysml.load('model.pysml')
+state = pysml.torch_load('model.pysml')
+```
+
+## Advanced Usage
+
+### Custom Checkpoint Metadata
+
+```python
+import pysml
+import time
+
+# Save with extensive metadata
+pysml.save_checkpoint(
+    model, optimizer, 'checkpoint.pysml',
+    epoch=50,
+    loss=0.3,
+    accuracy=0.95,
+    learning_rate=0.001,
+    timestamp=time.time(),
+    git_commit='abc123',
+    hyperparameters={
+        'batch_size': 32,
+        'dropout': 0.5,
+        'weight_decay': 0.01
+    }
+)
+
+# Load and access metadata
+checkpoint = pysml.load_checkpoint(model, optimizer, 'checkpoint.pysml')
+print(checkpoint['hyperparameters'])
+```
+
+### Incremental Saving
+
+```python
+import pysml
+
+# Save checkpoints with different names
+for epoch in range(100):
+    # ... training ...
+    
+    if epoch % 10 == 0:
+        pysml.save_checkpoint(
+            model, optimizer, f'checkpoints/epoch_{epoch:03d}.pysml',
+            epoch=epoch,
+            loss=loss.item()
+        )
+
+# Keep only last N checkpoints
+import os
+import glob
+
+checkpoint_dir = 'checkpoints'
+checkpoints = sorted(glob.glob(f'{checkpoint_dir}/epoch_*.pysml'))
+
+# Keep only last 5 checkpoints
+for old_checkpoint in checkpoints[:-5]:
+    os.remove(old_checkpoint)
+```
+
+### Safe Saving with Temporary Files
+
+```python
+import pysml
+import os
+import shutil
+
+def safe_save(obj, filepath):
+    """Save with atomic write using temporary file"""
+    temp_path = filepath + '.tmp'
+    
+    # Save to temporary file
+    pysml.save(obj, temp_path)
+    
+    # Move to final location (atomic on most filesystems)
+    shutil.move(temp_path, filepath)
+
+# Usage
+model = MyModel()
+safe_save(model.state_dict(), 'model_weights.pysml')
+```
+
+## Best Practices
+
+### 1. Always Save State Dict for Portability
+
+```python
+# Good: Portable and flexible
+pysml.save_state_dict(model, 'weights.pysml')
+
+# Less flexible: Saves entire model object
+pysml.save(model, 'model.pysml')
+```
+
+### 2. Include Version Information
+
+```python
+import pysml
+
+pysml.save_checkpoint(
+    model, optimizer, 'checkpoint.pysml',
+    epoch=epoch,
+    loss=loss,
+    pysml_version='0.4.9c',
+    model_version='1.0'
+)
+```
+
+### 3. Validate After Loading
+
+```python
+import pysml
+
+model = MyModel()
+pysml.load_state_dict(model, 'weights.pysml')
+
+# Verify model works
+test_input = pysml.Tensor([[0.5] * 784])
+output = model(test_input)
+print(f"Model loaded successfully. Output shape: {output.shape}")
+```
+
+### 4. Save Before Long Training Runs
+
+```python
+import pysml
+
+# Save initial state
+model = MyModel()
+optimizer = pysml.nn.AdamW(model.parameters())
+
+pysml.save_checkpoint(
+    model, optimizer, 'initial_checkpoint.pysml',
+    epoch=0,
+    loss=float('inf')
+)
+
+# Start training
+for epoch in range(1000):
+    # ... training code ...
+    pass
+```
+
+## Troubleshooting
+
+### Issue: "No such file or directory"
+
+```python
+import os
+
+# Create directory if it doesn't exist
+os.makedirs('checkpoints', exist_ok=True)
+pysml.save_checkpoint(model, optimizer, 'checkpoints/model.pysml')
+```
+
+### Issue: "Unexpected key in state_dict"
+
+```python
+# Use strict=False to allow partial loading
+pysml.load_state_dict(model, 'weights.pysml', strict=False)
+```
+
+### Issue: Device mismatch
+
+```python
+# Always specify map_location when loading
+model = MyModel()
+pysml.load_state_dict(model, 'weights.pysml', map_location='cpu')
+
+# Then move to desired device
+model.to('cuda:0')
+```
+
+## Performance Tips
+
+1. **Use pickle protocol 2**: Good balance of compatibility and speed
+2. **Save state dict instead of entire model**: Smaller file size
+3. **Compress large checkpoints**: Use gzip or similar
+4. **Save to fast storage**: SSD instead of HDD for large models
+5. **Batch save operations**: Don't save every epoch for large models
+
+## File Format
+
+PySML uses Python pickle format (`.pysml` extension) which is compatible with PyTorch. State dictionaries are saved as OrderedDict with numpy arrays for the weights.
+
+Structure:
+```
+checkpoint.pysml (pickle file)
+├── model_state_dict (OrderedDict)
+│   ├── 'layer1.weight': numpy.ndarray
+│   ├── 'layer1.bias': numpy.ndarray
+│   └── ...
+├── optimizer_state_dict (dict)
+│   ├── 'state': {...}
+│   └── 'param_groups': [...]
+├── epoch: int
+├── loss: float
+└── ... (custom metadata)
+```
+
+---
+
 ## Performance Benchmarks
 
 ### Memory Usage Comparison (v0.4.9c)
@@ -1910,6 +2373,7 @@ for i, batch in enumerate(dataloader):
 - [What's New in v0.4.9c](#whats-new-in-v049c)
 - [Memory Optimization](#memory-optimization-impact)
 - [Complete Examples](#complete-examples)
+- [Saving and Loading](#save-load)
 - [API Reference](#api-reference)
 - [Performance Benchmarks](#performance-benchmarks)
 - [Device Management](#device-management)
