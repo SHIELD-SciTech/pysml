@@ -189,7 +189,7 @@ def power(input, exponent, out=None):
 	if out is None:
 		result_data = backend.power(input.data, exponent_data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad
 		out._grad = None
 		out._dtype = input._dtype
 		out._backend = backend
@@ -285,7 +285,7 @@ def relu(input, out=None):
 	if out is None:
 		result_data = backend.maximum(input.data, 0)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad
 		out._grad = None
 		out._dtype = input._dtype
 		out._backend = backend
@@ -541,7 +541,7 @@ def mean_with_grad(input, axis=None, keepdims=False):
 	
 	# Wrap in Tensor
 	out = Tensor.__new__(Tensor)
-	out._requires_grad = input._requires_grad or other._requires_grad
+	out._requires_grad = input._requires_grad
 	out._grad = None
 	out._dtype = input._dtype
 	out._backend = backend

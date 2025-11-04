@@ -114,7 +114,7 @@ class Conv1d(Module):
 		output.device = x.device
 		output.active_device = x.active_device
 		output.data = backend.asarray(output_np)
-		output._requires_grad = x._requires_grad
+		output._requires_grad = True
 		output._grad = None
 		
 		return output
@@ -256,7 +256,7 @@ class Conv2d(Module):
 		output.device = x.device
 		output.active_device = x.active_device
 		output.data = backend.asarray(output_np)
-		output._requires_grad = x._requires_grad
+		output._requires_grad = True
 		output._grad = None
 		
 		return output
@@ -401,7 +401,7 @@ class Conv3d(Module):
 		output.device = x.device
 		output.active_device = x.active_device
 		output.data = backend.asarray(output_np)
-		output._requires_grad = x._requires_grad
+		output._requires_grad = True
 		output._grad = None
 		
 		return output
@@ -527,7 +527,7 @@ class ConvTranspose2d(Module):
 		output.device = x.device
 		output.active_device = x.active_device
 		output.data = backend.asarray(output_np)
-		output._requires_grad = x._requires_grad
+		output._requires_grad = True
 		output._grad = None
 		
 		return output

@@ -4,7 +4,7 @@ import gc
 
 
 class Tensor:
-	def __init__(self, data, dtype=None, requires_grad=False):
+	def __init__(self, data, dtype=None, requires_grad=True):
 		self._requires_grad = requires_grad
 		self._grad = None
 		self._grad_fn = None  # Computational graph node
