@@ -70,7 +70,10 @@ __all__ = [
 	'softmax', 'log_softmax', 'gelu', 'silu',
 	'layer_norm', 'rms_norm', 'batch_norm', 'group_norm',
 	'dropout', 'embedding',
-	'permute', 'unsqueeze', 'split',
-	'gather', 'masked_fill',
-	'xpu', 'cuda', 'cpu'
+        'permute', 'unsqueeze', 'split',
+        'gather', 'masked_fill',
+        'xpu', 'cuda', 'cpu'
 ]
+
+__version__ = '0.5.1'
+__all__.append('__version__')
