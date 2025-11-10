@@ -100,12 +100,30 @@ class Tensor:
 				if input_tensor._grad is None:
 					input_tensor._grad = grad
 				else:
-					# Accumulate gradient
+					# Accumulate gradient in-place to avoid extra allocations
 					backend = input_tensor._backend
-					input_tensor._grad.data = backend.add(
-						input_tensor._grad.data, 
-						grad.data
-					)
+					if hasattr(input_tensor._grad, 'data') and hasattr(grad, 'data'):
+						backend.add(
+							input_tensor._grad.data,
+							grad.data,
+							out=input_tensor._grad.data
+						)
+					else:
+						# Fallback: replace with summed result wrapped in a Tensor
+						summed = backend.add(
+							getattr(input_tensor._grad, 'data', input_tensor._grad),
+							getattr(grad, 'data', grad)
+						)
+						new_grad = Tensor.__new__(Tensor)
+						new_grad._backend = backend
+						new_grad._dtype = input_tensor._dtype
+						new_grad._requires_grad = False
+						new_grad._grad = None
+						new_grad._grad_fn = None
+						new_grad.device = input_tensor.device
+						new_grad.active_device = input_tensor.active_device
+						new_grad.data = summed
+						input_tensor._grad = new_grad
 		
 		# Clean up computational graph if not retaining
 		if not retain_graph:

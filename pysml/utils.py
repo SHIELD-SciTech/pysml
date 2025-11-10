@@ -11,7 +11,12 @@ def build_graph(tensor, nodes=None, edges=None):
 
 	# If it was created by an operation, add edges to parents
 	if tensor._grad_fn:
-		for parent in tensor._grad_fn.parents:
+		for parent_ref in (getattr(tensor._grad_fn, 'inputs', []) or []):
+			if parent_ref is None:
+				continue
+			parent = parent_ref()
+			if parent is None:
+				continue
 			edges.add((parent, tensor))
 			build_graph(parent, nodes, edges)
 
