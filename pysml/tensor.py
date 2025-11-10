@@ -32,6 +32,7 @@ class Tensor:
         "_backend",
         "device",
         "active_device",
+        "__weakref__",
     )
 
     def __init__(
