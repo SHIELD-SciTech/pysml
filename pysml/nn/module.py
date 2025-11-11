@@ -81,22 +81,36 @@ class Module:
 		return output
 	
 	def __setattr__(self, name: str, value: Any) -> None:
-		# Avoid recursion - check if we're still in __init__
 		if not hasattr(self, '_parameters'):
-			return object.__setattr__(self, name, value)
-		
-		# Handle Parameter registration
-		if isinstance(value, Parameter):
-			self._parameters[name] = value
-		
-		# Handle Module registration (submodules)
-		elif isinstance(value, Module):
-			self._modules[name] = value
-		
-		# Handle regular attributes
-		else:
 			object.__setattr__(self, name, value)
-	
+			return
+
+		params = self.__dict__['_parameters']
+		modules = self.__dict__['_modules']
+		buffers = self.__dict__['_buffers']
+
+		if isinstance(value, Parameter):
+			modules.pop(name, None)
+			buffers.pop(name, None)
+			params[name] = value
+			object.__setattr__(self, name, value)
+			return
+
+		if isinstance(value, Module):
+			params.pop(name, None)
+			buffers.pop(name, None)
+			modules[name] = value
+			object.__setattr__(self, name, value)
+			return
+
+		if name in params:
+			del params[name]
+		if name in modules:
+			del modules[name]
+		if name in buffers:
+			del buffers[name]
+
+		object.__setattr__(self, name, value)
 	def __getattr__(self, name: str) -> Any:
 		if '_parameters' in self.__dict__:
 			_parameters = self.__dict__['_parameters']

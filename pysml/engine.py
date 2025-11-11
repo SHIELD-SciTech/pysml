@@ -11,8 +11,9 @@ from pysml.autograd import (
 	backward_layer_norm, backward_rms_norm, backward_batch_norm, backward_group_norm,
 	backward_dropout, backward_embedding,
 	backward_permute, backward_unsqueeze, backward_mean,
-	backward_abs, backward_clip, backward_where,
-	backward_maximum, backward_minimum
+        backward_abs, backward_clip, backward_where,
+        backward_maximum, backward_minimum,
+        backward_split,
 )
 import gc
 
@@ -1480,8 +1481,42 @@ def unsqueeze(input, dim):
 
 def split(input, split_size_or_sections, dim=0):
 	backend = input._backend
-	chunks_data = backend.split(input.data, split_size_or_sections, dim)
-	
+	data = input.data
+
+	if data.ndim == 0:
+		raise ValueError("split expects at least a 1D tensor")
+
+	axis = dim % data.ndim
+
+	if isinstance(split_size_or_sections, int):
+		if split_size_or_sections <= 0:
+			raise ValueError("split_size must be positive")
+		total = data.shape[axis]
+		if total == 0:
+			raise ValueError("cannot split tensor with zero size along the given dimension")
+		full_chunks, remainder = divmod(total, split_size_or_sections)
+		sizes = [split_size_or_sections] * full_chunks
+		if remainder:
+			sizes.append(remainder)
+	else:
+		sizes = list(split_size_or_sections)
+		if not sizes:
+			raise ValueError("split expects a non-empty list of sections")
+		if any(size <= 0 for size in sizes):
+			raise ValueError("section sizes must be positive")
+		if sum(sizes) != data.shape[axis]:
+			raise ValueError("sum of split sizes must match tensor dimension")
+
+	slices = [slice(None)] * data.ndim
+	start = 0
+	chunks_data = []
+	for size in sizes:
+		end = start + size
+		slices[axis] = slice(start, end)
+		chunk_view = data[tuple(slices)]
+		chunks_data.append(chunk_view)
+		start = end
+
 	chunks = []
 	for chunk_data in chunks_data:
 		chunk = Tensor.__new__(Tensor)
@@ -1493,12 +1528,11 @@ def split(input, split_size_or_sections, dim=0):
 		chunk.active_device = input.active_device
 		chunk.data = chunk_data
 		chunks.append(chunk)
-	
-	# Note: backward for split is complex, simplified here
+
 	if is_grad_enabled() and input._requires_grad:
 		for chunk in chunks:
-			chunk._grad_fn = Function(backward_split, [input], metadata={'dim': dim})
-	
+			chunk._grad_fn = Function(backward_split, [input], metadata={'axis': axis})
+
 	return chunks
 
 
