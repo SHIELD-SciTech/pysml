@@ -104,7 +104,7 @@ def save_model_info(model, filepath):
 
 
 def _map_location(obj, device):
-	from ..tensor import Tensor
+	from .tensor import Tensor
 	
 	if isinstance(obj, Tensor):
 		return obj.to(device)

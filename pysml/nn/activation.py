@@ -1,5 +1,4 @@
 from .module import Module, Parameter
-import math
 
 
 class ReLU(Module):

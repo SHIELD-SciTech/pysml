@@ -333,5 +333,5 @@ __all__ = [
 
 
 # Version info
-__version__ = '0.1.0'
+__version__ = '0.5.1'
 __author__ = 'PySML Contributors'

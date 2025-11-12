@@ -11,12 +11,17 @@ from pysml.autograd import (
 	backward_layer_norm, backward_rms_norm, backward_batch_norm, backward_group_norm,
 	backward_dropout, backward_embedding,
 	backward_permute, backward_unsqueeze, backward_mean,
-	backward_abs, backward_clip, backward_where,
-	backward_maximum, backward_minimum
+        backward_abs, backward_clip, backward_where,
+        backward_maximum, backward_minimum,
+        backward_split,
 )
 import gc
 
 backend_priority = ["cpu", "xpu", "cuda"]
+
+def _requires_grad(obj):
+	"""Safely check if an object requires gradients."""
+	return getattr(obj, '_requires_grad', False) if obj is not None else False
 
 
 def _backend(*tensors):
@@ -53,7 +58,7 @@ def add(input, other, alpha=1, out=None):
 	if out is None:
 		result_data = backend.add(input.data, other_data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad or _requires_grad(other)
 		out._grad = None
 		out._dtype = input._dtype
 		out._backend = backend
@@ -85,7 +90,7 @@ def subtract(input, other, out=None):
 	if out is None:
 		result_data = backend.subtract(input.data, other_data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad or _requires_grad(other)
 		out._grad = None
 		out._dtype = input._dtype
 		out._backend = backend
@@ -117,7 +122,7 @@ def multiply(input, other, out=None):
 	if out is None:
 		result_data = backend.multiply(input.data, other_data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad or _requires_grad(other)
 		out._grad = None
 		out._dtype = input._dtype
 		out._backend = backend
@@ -153,7 +158,7 @@ def divide(input, other, out=None):
 	if out is None:
 		result_data = backend.divide(input.data, other_data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad or _requires_grad(other)
 		out._grad = None
 		out._dtype = input._dtype
 		out._backend = backend
@@ -216,7 +221,7 @@ def negative(input, out=None):
 	if out is None:
 		result_data = backend.negative(input.data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad
 		out._grad = None
 		out._dtype = input._dtype
 		out._backend = backend
@@ -250,7 +255,7 @@ def matmul(input, other, out=None):
 	if out is None:
 		result_data = backend.matmul(input.data, other.data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad or _requires_grad(other)
 		out._grad = None
 		out._dtype = input._dtype
 		out._backend = backend
@@ -312,7 +317,7 @@ def exp(input, out=None):
 	if out is None:
 		result_data = backend.exp(input.data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad
 		out._grad = None
 		out._dtype = input._dtype
 		out._backend = backend
@@ -339,7 +344,7 @@ def log(input, out=None):
 	if out is None:
 		result_data = backend.log(input.data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad
 		out._grad = None
 		out._dtype = input._dtype
 		out._backend = backend
@@ -366,7 +371,7 @@ def tanh(input, out=None):
 	if out is None:
 		result_data = backend.tanh(input.data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad
 		out._grad = None
 		out._dtype = input._dtype
 		out._backend = backend
@@ -396,7 +401,7 @@ def sigmoid(input, out=None):
 			backend.add(1.0, backend.exp(backend.negative(input.data)))
 		)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad
 		out._grad = None
 		out._dtype = input._dtype
 		out._backend = backend
@@ -426,7 +431,7 @@ def sqrt(input, out=None):
 	if out is None:
 		result_data = backend.sqrt(input.data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad
 		out._grad = None
 		out._dtype = input._dtype
 		out._backend = backend
@@ -458,7 +463,7 @@ def sin(input, out=None):
 	if out is None:
 		result_data = backend.sin(input.data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad
 		out._grad = None
 		out._dtype = input._dtype
 		out._backend = backend
@@ -485,7 +490,7 @@ def cos(input, out=None):
 	if out is None:
 		result_data = backend.cos(input.data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad
 		out._grad = None
 		out._dtype = input._dtype
 		out._backend = backend
@@ -516,7 +521,7 @@ def sum_with_grad(input, axis=None, keepdims=False):
 	
 	# Wrap in Tensor
 	out = Tensor.__new__(Tensor)
-	out._requires_grad = input._requires_grad or other._requires_grad
+	out._requires_grad = input._requires_grad
 	out._grad = None
 	out._dtype = input._dtype
 	out._backend = backend
@@ -606,7 +611,7 @@ def transpose(input, axes=None):
 		result_data = backend.transpose(input.data, axes)
 	
 	out = Tensor.__new__(Tensor)
-	out._requires_grad = input._requires_grad or other._requires_grad
+	out._requires_grad = input._requires_grad
 	out._grad = None
 	out._dtype = input._dtype
 	out._backend = backend
@@ -630,7 +635,7 @@ def reshape(input, shape):
 	result_data = backend.reshape(input.data, shape)
 	
 	out = Tensor.__new__(Tensor)
-	out._requires_grad = input._requires_grad or other._requires_grad
+	out._requires_grad = input._requires_grad
 	out._grad = None
 	out._dtype = input._dtype
 	out._backend = backend
@@ -655,7 +660,7 @@ def positive(input, out=None):
 	if out is None:
 		result_data = backend.positive(input.data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad
 		out._grad = None
 		out._grad_fn = None  # Gradient is just passed through
 		out._dtype = input._dtype
@@ -673,7 +678,7 @@ def abs(input, out=None):
 	if out is None:
 		result_data = backend.abs(input.data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad
 		out._grad = None
 		out._grad_fn = None  # Requires sign tracking for proper backward
 		out._dtype = input._dtype
@@ -788,7 +793,7 @@ def log10(input, out=None):
 	if out is None:
 		result_data = backend.log10(input.data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad
 		out._grad = None
 		out._grad_fn = None  # Can be added: grad = grad_out / (x * ln(10))
 		out._dtype = input._dtype
@@ -806,7 +811,7 @@ def log2(input, out=None):
 	if out is None:
 		result_data = backend.log2(input.data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad
 		out._grad = None
 		out._grad_fn = None  # Can be added: grad = grad_out / (x * ln(2))
 		out._dtype = input._dtype
@@ -824,7 +829,7 @@ def tan(input, out=None):
 	if out is None:
 		result_data = backend.tan(input.data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad
 		out._grad = None
 		out._grad_fn = None  # Can be added
 		out._dtype = input._dtype
@@ -842,7 +847,7 @@ def arcsin(input, out=None):
 	if out is None:
 		result_data = backend.arcsin(input.data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad
 		out._grad = None
 		out._grad_fn = None
 		out._dtype = input._dtype
@@ -860,7 +865,7 @@ def arccos(input, out=None):
 	if out is None:
 		result_data = backend.arccos(input.data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad
 		out._grad = None
 		out._grad_fn = None
 		out._dtype = input._dtype
@@ -878,7 +883,7 @@ def arctan(input, out=None):
 	if out is None:
 		result_data = backend.arctan(input.data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad
 		out._grad = None
 		out._grad_fn = None
 		out._dtype = input._dtype
@@ -896,7 +901,7 @@ def sinh(input, out=None):
 	if out is None:
 		result_data = backend.sinh(input.data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad
 		out._grad = None
 		out._grad_fn = None
 		out._dtype = input._dtype
@@ -914,7 +919,7 @@ def cosh(input, out=None):
 	if out is None:
 		result_data = backend.cosh(input.data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad
 		out._grad = None
 		out._grad_fn = None
 		out._dtype = input._dtype
@@ -939,7 +944,7 @@ def squeeze(input, axis=None):
 		result_data = backend.squeeze(input.data, axis)
 	
 	out = Tensor.__new__(Tensor)
-	out._requires_grad = input._requires_grad or other._requires_grad
+	out._requires_grad = input._requires_grad
 	out._grad = None
 	out._grad_fn = None  # View operation - can add grad
 	out._dtype = input._dtype
@@ -955,7 +960,7 @@ def expand_dims(input, axis):
 	result_data = backend.expand_dims(input.data, axis)
 	
 	out = Tensor.__new__(Tensor)
-	out._requires_grad = input._requires_grad or other._requires_grad
+	out._requires_grad = input._requires_grad
 	out._grad = None
 	out._grad_fn = None  # View operation - can add grad
 	out._dtype = input._dtype
@@ -1027,7 +1032,7 @@ def outer(input, other):
 	result_data = backend.outer(input.data, other.data)
 	
 	out = Tensor.__new__(Tensor)
-	out._requires_grad = input._requires_grad or other._requires_grad
+	out._requires_grad = input._requires_grad or _requires_grad(other)
 	out._grad = None
 	out._grad_fn = None  # Can add grad
 	out._dtype = input._dtype
@@ -1062,7 +1067,7 @@ def maximum(input, other, out=None):
 	if out is None:
 		result_data = backend.maximum(input.data, other_data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad or _requires_grad(other)
 		out._grad = None
 		out._grad_fn = None  # Can add grad based on which input was larger
 		out._dtype = input._dtype
@@ -1086,7 +1091,7 @@ def minimum(input, other, out=None):
 	if out is None:
 		result_data = backend.minimum(input.data, other_data)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad or _requires_grad(other)
 		out._grad = None
 		out._grad_fn = None  # Can add grad based on which input was smaller
 		out._dtype = input._dtype
@@ -1106,7 +1111,7 @@ def clip(input, min_val, max_val, out=None):
 	if out is None:
 		result_data = backend.clip(input.data, min_val, max_val)
 		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or other._requires_grad
+		out._requires_grad = input._requires_grad
 		out._grad = None
 		out._grad_fn = None  # Can add grad (gradient where not clipped, 0 where clipped)
 		out._dtype = input._dtype
@@ -1476,8 +1481,42 @@ def unsqueeze(input, dim):
 
 def split(input, split_size_or_sections, dim=0):
 	backend = input._backend
-	chunks_data = backend.split(input.data, split_size_or_sections, dim)
-	
+	data = input.data
+
+	if data.ndim == 0:
+		raise ValueError("split expects at least a 1D tensor")
+
+	axis = dim % data.ndim
+
+	if isinstance(split_size_or_sections, int):
+		if split_size_or_sections <= 0:
+			raise ValueError("split_size must be positive")
+		total = data.shape[axis]
+		if total == 0:
+			raise ValueError("cannot split tensor with zero size along the given dimension")
+		full_chunks, remainder = divmod(total, split_size_or_sections)
+		sizes = [split_size_or_sections] * full_chunks
+		if remainder:
+			sizes.append(remainder)
+	else:
+		sizes = list(split_size_or_sections)
+		if not sizes:
+			raise ValueError("split expects a non-empty list of sections")
+		if any(size <= 0 for size in sizes):
+			raise ValueError("section sizes must be positive")
+		if sum(sizes) != data.shape[axis]:
+			raise ValueError("sum of split sizes must match tensor dimension")
+
+	slices = [slice(None)] * data.ndim
+	start = 0
+	chunks_data = []
+	for size in sizes:
+		end = start + size
+		slices[axis] = slice(start, end)
+		chunk_view = data[tuple(slices)]
+		chunks_data.append(chunk_view)
+		start = end
+
 	chunks = []
 	for chunk_data in chunks_data:
 		chunk = Tensor.__new__(Tensor)
@@ -1489,12 +1528,11 @@ def split(input, split_size_or_sections, dim=0):
 		chunk.active_device = input.active_device
 		chunk.data = chunk_data
 		chunks.append(chunk)
-	
-	# Note: backward for split is complex, simplified here
+
 	if is_grad_enabled() and input._requires_grad:
 		for chunk in chunks:
-			chunk._grad_fn = Function(backward_split, [input], metadata={'dim': dim})
-	
+			chunk._grad_fn = Function(backward_split, [input], metadata={'axis': axis})
+
 	return chunks
 
 
