@@ -40,6 +40,7 @@ from .engine import (
 )
 
 from . import utils
+from . import distributed
 
 from . import xpu
 from . import cuda
@@ -72,7 +73,7 @@ __all__ = [
 	'dropout', 'embedding',
         'permute', 'unsqueeze', 'split',
         'gather', 'masked_fill',
-        'xpu', 'cuda', 'cpu'
+        'xpu', 'cuda', 'cpu', 'distributed'
 ]
 
 __version__ = '0.5.3'

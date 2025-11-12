@@ -9,5 +9,6 @@ Welcome to the PySML knowledge base. This directory contains deep dives into the
 - [Backend Abstraction](backends.md)
 - [Tensor Memory Pooling](memory_pool.md)
 - [Saving & Loading Models](save_load.md)
+- [Distributed Training](distributed.md)
 
 Each document highlights expected usage patterns, extension points, and gotchas. Contributions are welcome—please keep entries consistent with the code and include links to relevant examples when possible.
