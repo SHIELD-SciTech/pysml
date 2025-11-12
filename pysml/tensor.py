@@ -12,8 +12,11 @@ from __future__ import annotations
 
 import gc
 from collections.abc import Sequence
-from typing import Optional, Union
+from typing import Optional, Union, TYPE_CHECKING
 
+
+if TYPE_CHECKING:
+    from pysml.distributed.backends.base import CollectiveBackend
 from .dtype import bf16
 
 DeviceLike = Union[str, "Tensor", None]
@@ -151,6 +154,33 @@ class Tensor:
     # ------------------------------------------------------------------
     # Device and dtype management
     # ------------------------------------------------------------------
+    @property
+    def backend_name(self) -> str:
+        return getattr(self._backend, 'BACKEND_NAME', 'cpu')
+
+    @property
+    def device_type(self) -> str:
+        from .distributed.routing import get_device_type
+
+        device = get_device_type(self.active_device)
+        return device or 'cpu'
+
+    @property
+    def communicator(self) -> 'CollectiveBackend':
+        from . import distributed
+
+        return distributed.get_communicator(self)
+
+    def distributed_rank(self) -> int:
+        from . import distributed
+
+        return distributed.get_rank(self.device_type)
+
+    def distributed_world_size(self) -> int:
+        from . import distributed
+
+        return distributed.get_world_size(self.device_type)
+
     def to(
         self,
         device: DeviceLike = None,

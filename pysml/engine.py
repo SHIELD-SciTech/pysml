@@ -15,7 +15,14 @@ from pysml.autograd import (
         backward_maximum, backward_minimum,
         backward_split,
 )
+from pysml.distributed.process_group import lazy_init_from_env as _ensure_dist_context
+
 import gc
+
+
+def ensure_distributed_initialized():
+        """Ensure the default process group is created when needed."""
+        _ensure_dist_context()
 
 backend_priority = ["cpu", "xpu", "cuda"]
 
