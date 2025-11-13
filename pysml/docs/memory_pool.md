@@ -1,16 +1,45 @@
 # Tensor Memory Pooling
 
-The memory pool reduces allocation overhead by caching backend buffers keyed by tensor shape, dtype, backend, and device.
+High-throughput workloads (diffusion sampling, Transformer inference, etc.) benefit from reusing backend buffers instead of constantly reallocating them. The `pysml.memory_pool` module exposes opt-in helpers with the following structure.
 
-## Lifecycle
-- `TensorBufferPool` maintains thread-safe lists of reusable buffers for each key and caps every pool at 32 entries to avoid uncontrolled growth.【F:pysml/memory_pool.py†L1-L44】
-- Disabling the pool flushes all cached buffers; re-enabling starts fresh without residual allocations.【F:pysml/memory_pool.py†L12-L44】
+## `TensorBufferPool`
+- **Reference**: Class defined in `pysml/memory_pool.py`.【F:pysml/memory_pool.py†L1-L48】
+- **What it does**: Caches backend buffers keyed by shape/dtype/device with a 32-buffer limit per key to prevent unbounded growth.
+- **Used in scripts**: Benchmark helper toggles the pool when comparing latency between CPU, CUDA, and XPU runs of the diffusion example.【F:pysml/examples/benchmark.py†L80-L200】
+- **Typical usage**:
+  ```python
+  from pysml.memory_pool import TensorBufferPool
 
-## Global Controls
-Use the helper functions exported at module scope:
-- `get_buffer_pool()` – Access the singleton pool instance.【F:pysml/memory_pool.py†L46-L55】
-- `enable_buffer_pool()` / `disable_buffer_pool()` – Toggle caching without restarting your script.【F:pysml/memory_pool.py†L46-L60】
-- `clear_buffer_pool()` – Drop all cached buffers immediately.【F:pysml/memory_pool.py†L34-L60】
-- `get_pool_stats()` – Inspect the number of tracked pools and total buffers for debugging fragmentation issues.【F:pysml/memory_pool.py†L36-L76】
+  pool = TensorBufferPool()
+  pool.enable()
+  ```
+- **Equivalent APIs**: PyTorch’s CUDA caching allocator, TensorFlow’s BFC allocator knobs.
 
-Pooling is optional—allocation falls back to raw backend arrays when the cache is disabled.
+## Module-level helpers
+
+### `get_buffer_pool`
+- **Reference**: Returns the singleton pool instance.【F:pysml/memory_pool.py†L46-L55】
+- **What it does**: Provides global access so tensors and custom ops share the same cache.
+- **Used in scripts**: Examples call `get_buffer_pool().enable()` once at startup to stabilize performance.【F:pysml/examples/diffusion.py†L146-L210】
+- **Equivalent APIs**: `torch.cuda.memory_allocated` (for inspection) combined with `torch.cuda.empty_cache` when manually controlling caches.
+
+### `enable_buffer_pool` / `disable_buffer_pool`
+- **Reference**: Toggles caching in `pysml/memory_pool.py`.【F:pysml/memory_pool.py†L50-L60】
+- **What it does**: Turns pooling on/off without recreating the singleton—useful for A/B tests.
+- **Typical usage**:
+  ```python
+  from pysml.memory_pool import enable_buffer_pool, disable_buffer_pool
+
+  enable_buffer_pool()
+  ...  # benchmark
+  disable_buffer_pool()
+  ```
+- **Equivalent APIs**: `torch.cuda.empty_cache` for forcing releases; TensorFlow’s experimental memory growth controls.
+
+### `clear_buffer_pool` / `get_pool_stats`
+- **Reference**: Maintenance helpers near the bottom of the module.【F:pysml/memory_pool.py†L34-L76】
+- **What they do**: `clear_buffer_pool()` drops all cached buffers immediately, while `get_pool_stats()` reports how many keys/buffers remain for debugging fragmentation.
+- **Used in scripts**: Benchmark utilities print stats before/after long runs to verify buffers are reused as expected.【F:pysml/examples/benchmark.py†L120-L200】
+- **Equivalent APIs**: PyTorch’s `torch.cuda.memory_stats`, TensorFlow’s `tf.config.experimental.get_memory_usage`.
+
+Pooling is optional—when disabled, tensors fall back to raw backend allocations exactly like vanilla NumPy/CuPy/dpnp code.

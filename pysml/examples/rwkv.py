@@ -1,4 +1,30 @@
-"""Minimal RWKV-style recurrent example for PySML."""
+"""RWKV example covering CPU, CUDA, and Intel XPU backends.
+
+RWKV Example Overview
+=====================
+
+This module provides a bite-sized RWKV-like network together with helpers that
+showcase PySML's :class:`~pysml.examples.parallel_utils.ExampleConfig`
+orchestration. Each helper documents how to run on CPU, CUDA, or Intel XPU
+devices and how to toggle prototype pipeline parallel execution. Although
+``PipelineModule`` does not yet hand off tensors between ranks, the functions in
+this file illustrate how to partition RWKV blocks, collect per-stage latency
+metrics, and experiment with activation checkpointing.
+
+Typical usage::
+
+    from pysml.examples import rwkv
+    from pysml.examples.parallel_utils import ExampleConfig
+
+    config = ExampleConfig(backend="xpu", pipeline_parallel=4, pipeline_chunks=4)
+    rwkv.train_example(config, steps=8, use_pipeline=True)
+
+    # When you only need a quick latency breakdown per stage:
+    rwkv.demonstrate_pipeline_segments(vocab_size=256, config=config)
+
+The rest of the file spells out the building blocks (embedding, stacked RWKV
+blocks, and the classifier head) so the partitioning points are easy to follow.
+"""
 from __future__ import annotations
 
 import numpy as np
@@ -157,6 +183,7 @@ def generate_batch(
     *,
     rng: np.random.Generator | None = None,
 ):
+    """Generate a deterministic batch of toy data for regression tests."""
     rng = rng or np.random.default_rng()
     tokens = rng.integers(0, vocab_size, size=(batch_size, seq_len), dtype=np.int64)
     targets = rng.integers(0, num_classes, size=(batch_size,), dtype=np.int64)
@@ -164,6 +191,7 @@ def generate_batch(
 
 
 def build_rwkv_stages(model: TinyRWKVModel) -> list[Module]:
+    """Split the RWKV model into four intuitive pipeline stages."""
     mid = len(model.blocks) // 2 or 1
     first = ModuleList(list(model.blocks)[:mid])
     second = ModuleList(list(model.blocks)[mid:])
@@ -178,6 +206,25 @@ def build_rwkv_stages(model: TinyRWKVModel) -> list[Module]:
 def train_example(
     config: ExampleConfig, steps: int = DEFAULT_STEPS, *, use_pipeline: bool = False
 ) -> dict:
+    """Train the toy RWKV classifier with rich logging.
+
+    Parameters
+    ----------
+    config:
+        ``ExampleConfig`` describing the backend plus data/pipeline/tensor degrees.
+    steps:
+        Number of optimisation steps to run.
+    use_pipeline:
+        When ``True`` the model is wrapped in :class:`~pysml.nn.pipeline.PipelineModule`
+        using ``build_rwkv_stages``. This remains single-process execution but
+        exposes micro-batch scheduling and profiling hooks.
+
+    Returns
+    -------
+    dict
+        A ``{"final_loss": float, "loss_history": list}`` dictionary useful for
+        quick regression tests.
+    """
     batch_size = 4
     seq_len = 32
     vocab_size = 256
@@ -217,6 +264,7 @@ def train_example(
 
 
 def deterministic_logits(config: ExampleConfig, seed: int = 0) -> Tensor:
+    """Produce logits without randomness so tests can compare outputs."""
     np.random.seed(seed)
     model = TinyRWKVModel()
     model = config.apply(model)
@@ -231,6 +279,14 @@ def deterministic_logits(config: ExampleConfig, seed: int = 0) -> Tensor:
 def demonstrate_pipeline_segments(
     vocab_size: int, config: ExampleConfig | None = None
 ) -> None:
+    """Print pipeline metrics for a staged RWKV model.
+
+    The helper is intentionally side-effectful: it builds a reference
+    ``TinyRWKVModel``, applies the provided ``ExampleConfig`` (or a default
+    CPU-only config), and reports tensor shapes plus the latest pipeline metrics.
+    Because this routine feeds random data you can call it in exploratory
+    notebooks without touching the training loop.
+    """
     cfg = config or ExampleConfig()
     model = TinyRWKVModel(vocab_size=vocab_size)
     pipeline = cfg.apply(

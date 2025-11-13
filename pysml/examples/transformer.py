@@ -1,4 +1,16 @@
-"""Minimal Transformer encoder example for PySML."""
+"""Transformer classifier and seq2seq walkthrough.
+
+Transformer Example Overview
+============================
+
+This module contains two compact Transformer variants and demonstrates how to
+drive them through ``ExampleConfig`` for different backends (CPU, CUDA, Intel
+XPU) and degrees of data/pipeline/tensor parallelism. Every public helper has a
+docstring with inline snippets so you can copy/paste the exact invocation when
+experimenting with PySML's distributed features. The code is intentionally
+verbose so the stage boundaries are obvious when feeding the network into
+``PipelineModule``.
+"""
 from __future__ import annotations
 
 import numpy as np
@@ -167,6 +179,7 @@ def generate_batch(
     *,
     rng: np.random.Generator | None = None,
 ):
+    """Return integer tensors suitable for classifier or seq2seq tests."""
     rng = rng or np.random.default_rng()
     tokens = rng.integers(0, vocab_size, size=(batch_size, seq_len), dtype=np.int64)
     targets = rng.integers(0, num_classes, size=(batch_size,), dtype=np.int64)
@@ -174,6 +187,7 @@ def generate_batch(
 
 
 def build_transformer_stages(vocab_size: int, d_model: int = 64) -> list[Module]:
+    """Assemble four intuitive pipeline stages (src embed, encoder, decoder, head)."""
     src_embedding = Embedding(vocab_size, d_model)
     tgt_embedding = Embedding(vocab_size, d_model)
     src_position = SinusoidalPositionalEncoding(d_model, max_len=64)
@@ -208,6 +222,14 @@ def build_transformer_stages(vocab_size: int, d_model: int = 64) -> list[Module]
 def train_example(
     config: ExampleConfig, steps: int = DEFAULT_STEPS, *, use_pipeline: bool = False
 ) -> dict:
+    """Train the classifier for a few steps and return metrics.
+
+    The helper mirrors ``rwkv.train_example``: pass a configured
+    :class:`~pysml.examples.parallel_utils.ExampleConfig` and set
+    ``use_pipeline=True`` to wrap the seq2seq model with ``PipelineModule``.
+    Because PySML does not yet exchange tensors across ranks, pipeline mode
+    should be viewed as instrumentation rather than true distributed execution.
+    """
     batch_size = 8
     seq_len = 32
     vocab_size = 256
@@ -249,6 +271,7 @@ def train_example(
 
 
 def deterministic_logits(config: ExampleConfig, seed: int = 0) -> Tensor:
+    """Create deterministic logits for regression tests and docs."""
     np.random.seed(seed)
     model = TinyTransformerClassifier()
     model = config.apply(model)
@@ -263,6 +286,7 @@ def deterministic_logits(config: ExampleConfig, seed: int = 0) -> Tensor:
 def demonstrate_pipeline_split(
     vocab_size: int, config: ExampleConfig | None = None
 ) -> None:
+    """Show how the seq2seq model can be partitioned into four stages."""
     cfg = config or ExampleConfig()
     pipeline = cfg.apply(
         TinyTransformerClassifier(vocab_size=vocab_size),

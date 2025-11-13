@@ -1,4 +1,14 @@
-"""Diffusion-style U-Net example for PySML."""
+"""Diffusion U-Net walkthrough with detailed commentary.
+
+Diffusion Example Overview
+==========================
+
+Just like the RWKV and Transformer modules, this script wraps a compact U-Net in
+``ExampleConfig`` glue so you can flip between CPU, CUDA, and Intel XPU devices.
+Docstrings highlight how to run local regression tests, how to enable the
+prototype pipeline mode, and what each helper returns. Use it as a verbose
+reference when porting larger diffusion architectures onto PySML.
+"""
 from __future__ import annotations
 
 import numpy as np
@@ -124,6 +134,7 @@ def generate_batch(
     *,
     rng: np.random.Generator | None = None,
 ):
+    """Return noisy inputs and clean noise targets for diffusion loss."""
     rng = rng or np.random.default_rng()
     clean = rng.standard_normal(size=(batch_size, channels, height, width)).astype(
         np.float32
@@ -136,6 +147,7 @@ def generate_batch(
 
 
 def build_unet_stages(model: TinyDiffusionUNet) -> list[Module]:
+    """Split the U-Net into down, mid, and up pipeline chunks."""
     return [
         DownStage(model.conv_in, model.down, model.downsample),
         MidStage(model.mid),
@@ -146,6 +158,7 @@ def build_unet_stages(model: TinyDiffusionUNet) -> list[Module]:
 def train_example(
     config: ExampleConfig, steps: int = DEFAULT_STEPS, *, use_pipeline: bool = False
 ) -> dict:
+    """Train the toy U-Net for a few diffusion-style denoising steps."""
     batch_size = 2
     channels = 3
     height = width = 32
@@ -182,6 +195,7 @@ def train_example(
 
 
 def deterministic_prediction(config: ExampleConfig, seed: int = 0) -> Tensor:
+    """Create deterministic predictions for regression tests and docs."""
     np.random.seed(seed)
     model = TinyDiffusionUNet()
     model = config.apply(model)
@@ -194,6 +208,7 @@ def deterministic_prediction(config: ExampleConfig, seed: int = 0) -> Tensor:
 
 
 def demonstrate_pipeline_unet(config: ExampleConfig | None = None) -> None:
+    """Showcase the three-stage pipeline split and print profiling metrics."""
     cfg = config or ExampleConfig()
     model = TinyDiffusionUNet()
     pipeline = cfg.apply(

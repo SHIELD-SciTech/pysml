@@ -10,7 +10,14 @@ from pysml.nn import Module
 
 @dataclass
 class ExampleConfig:
-    """Describe how an example should be executed."""
+    """Describe how an example should be executed.
+
+    The dataclass mirrors CLI arguments you might pass to a launcher: select a
+    backend string (``"cpu"``, ``"cuda"``, ``"xpu"``), dial in data/pipeline/tensor
+    degrees, and optionally enable activation checkpointing. Example docstrings
+    throughout ``pysml.examples`` reference ``ExampleConfig`` directly so readers
+    can discover every knob from a single place.
+    """
 
     backend: str = "cpu"
     data_parallel: int = 1

@@ -1,4 +1,10 @@
-"""Benchmark helpers to compare single-device and pipeline runs."""
+"""Benchmark helpers to compare single-device and pipeline runs.
+
+The functions here intentionally favour readability over raw performance so you
+can adapt them for your own experiments. ``compare_single_vs_pipeline`` produces
+side-by-side statistics for CPU, CUDA, or Intel XPU launches – ideal when
+validating that prototype pipeline schedules match the throughput you expect.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -35,6 +41,7 @@ def benchmark(
     steps: int = 3,
     use_pipeline: bool = False,
 ) -> BenchmarkResult:
+    """Run a single benchmark configuration and capture throughput stats."""
     runner = RUNNERS[example]
     start = time.perf_counter()
     runner(config, steps=steps, use_pipeline=use_pipeline)
@@ -57,6 +64,7 @@ def compare_single_vs_pipeline(
     pipeline_parallel: int = 2,
     pipeline_chunks: int = 2,
 ) -> List[BenchmarkResult]:
+    """Return both single-device and pipeline benchmark entries."""
     base = ExampleConfig(backend=backend)
     pipelined = ExampleConfig(
         backend=backend,
@@ -69,6 +77,7 @@ def compare_single_vs_pipeline(
 
 
 def summarize(results: Iterable[BenchmarkResult]) -> None:
+    """Pretty-print benchmark results in a table-like format."""
     for result in results:
         print(
             f"{result.example:<12} {result.backend:<8} {result.strategy:<8} "
