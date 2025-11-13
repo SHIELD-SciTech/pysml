@@ -38,11 +38,21 @@ abs = absolute = cp.abs
 sign = cp.sign
 
 def matmul(x1, x2, out=None):
-	result = cp.matmul(x1, x2)
-	if out is not None:
-		cp.copyto(out, result)
-		return out
-	return result
+        result = cp.matmul(x1, x2)
+        if out is not None:
+                cp.copyto(out, result)
+                return out
+        return result
+
+
+def tensor_parallel_matmul(input, weight, bias=None, transpose_weight=True):
+        """Backend-aware matmul with optional fused bias."""
+
+        right = cp.swapaxes(weight, -1, -2) if transpose_weight else weight
+        out = cp.matmul(input, right)
+        if bias is not None:
+                out = cp.add(out, bias)
+        return out
 
 dot = cp.dot
 outer = cp.outer
