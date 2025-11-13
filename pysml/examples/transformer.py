@@ -5,10 +5,13 @@ building blocks provided by ``pysml.nn``. It shows how to wire embeddings,
 positional encodings, ``TransformerEncoderLayer`` stacks, and a classification
 head together, then run a few dummy optimization steps.
 """
+from __future__ import annotations
+
 import numpy as np
 
 import pysml
 from pysml import Tensor
+from pysml.distributed import ParallelStrategy
 from pysml.nn import (
     Module,
     Embedding,
@@ -21,7 +24,6 @@ from pysml.nn import (
     CrossEntropyLoss,
     AdamW,
     SinusoidalPositionalEncoding,
-    PipelineModule,
 )
 
 
@@ -184,13 +186,15 @@ def generate_batch(batch_size: int, seq_len: int, vocab_size: int, num_classes: 
     return build_int_tensor(tokens), build_int_tensor(targets)
 
 
-def main() -> None:
+def main(strategy: ParallelStrategy | None = None) -> None:
     batch_size = 8
     seq_len = 32
     vocab_size = 256
     num_classes = 4
 
     model = TinyTransformerClassifier(vocab_size=vocab_size, num_classes=num_classes)
+    if strategy is not None:
+        model = strategy.apply(model)
     optimizer = AdamW(model.parameters(), lr=3e-4)
     criterion = CrossEntropyLoss()
 
@@ -207,7 +211,9 @@ def main() -> None:
     demonstrate_pipeline_split(vocab_size)
 
 
-def demonstrate_pipeline_split(vocab_size: int) -> None:
+def demonstrate_pipeline_split(
+    vocab_size: int, strategy: ParallelStrategy | None = None
+) -> None:
     d_model = 64
     src_embedding = Embedding(vocab_size, d_model)
     tgt_embedding = Embedding(vocab_size, d_model)
@@ -238,12 +244,15 @@ def demonstrate_pipeline_split(vocab_size: int) -> None:
         DecoderStage(decoder, tgt_embedding, tgt_position),
         ProjectionStage(head),
     ]
-    pipeline = PipelineModule(
-        stages,
-        partitions=[1, 1, 1, 1],
+    pipeline_strategy = strategy or ParallelStrategy.hybrid(
+        pipeline=len(stages),
         schedule="1f1b",
         chunks=2,
         activation_checkpoint=True,
+    )
+    pipeline = pipeline_strategy.apply(
+        pipeline_stages=stages,
+        pipeline_kwargs={"partitions": [1, 1, 1, 1]},
     )
     src, _ = generate_batch(batch_size=4, seq_len=16, vocab_size=vocab_size, num_classes=vocab_size)
     tgt, _ = generate_batch(batch_size=4, seq_len=16, vocab_size=vocab_size, num_classes=vocab_size)

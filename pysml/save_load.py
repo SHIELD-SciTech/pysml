@@ -1,8 +1,14 @@
 import pickle
 import json
 import os
-from collections import OrderedDict
+from typing import Any, Dict, Optional
+
 import numpy as np
+
+try:  # Avoid circular import on module load during setup
+        from .distributed.strategy import ParallelStrategy
+except Exception:  # pragma: no cover - fallback for minimal builds
+        ParallelStrategy = None  # type: ignore
 
 
 def save(obj, f, pickle_protocol=2):
@@ -37,33 +43,66 @@ def load_state_dict(model, filepath, strict=True, map_location=None):
 	model.load_state_dict(state_dict, strict=strict)
 
 
-def save_checkpoint(model, optimizer, filepath, epoch=None, loss=None, **kwargs):
-	checkpoint = {
-		'model_state_dict': model.state_dict(),
-		'optimizer_state_dict': optimizer.state_dict(),
-		'epoch': epoch,
-		'loss': loss,
-	}
-	
-	# Add any additional metadata
-	checkpoint.update(kwargs)
-	
-	save(checkpoint, filepath)
+def _serialize_strategy(strategy):
+        if strategy is None:
+                return None
+        if ParallelStrategy is not None and isinstance(strategy, ParallelStrategy):
+                return strategy.to_dict()
+        if hasattr(strategy, 'to_dict'):
+                return strategy.to_dict()
+        raise TypeError("strategy must be a ParallelStrategy or expose to_dict()")
+
+
+def _deserialize_strategy(payload):
+        if payload is None or ParallelStrategy is None:
+                return payload
+        return ParallelStrategy.from_dict(payload)
+
+
+def save_checkpoint(
+        model,
+        optimizer,
+        filepath,
+        epoch=None,
+        loss=None,
+        *,
+        strategy=None,
+        distributed_state: Optional[Dict[str, Any]] = None,
+        **kwargs,
+):
+        checkpoint = {
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'epoch': epoch,
+                'loss': loss,
+        }
+
+        if strategy is not None:
+                checkpoint['parallel_strategy'] = _serialize_strategy(strategy)
+        if distributed_state is not None:
+                checkpoint['distributed_state'] = distributed_state
+
+        # Add any additional metadata
+        checkpoint.update(kwargs)
+
+        save(checkpoint, filepath)
 
 
 def load_checkpoint(model, optimizer, filepath, map_location=None):
-	checkpoint = load(filepath, map_location=map_location)
-	
-	model.load_state_dict(checkpoint['model_state_dict'])
-	
-	if optimizer is not None and 'optimizer_state_dict' in checkpoint:
-		optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-	
-	# Return metadata
-	metadata = {k: v for k, v in checkpoint.items() 
-				if k not in ['model_state_dict', 'optimizer_state_dict']}
-	
-	return metadata
+        checkpoint = load(filepath, map_location=map_location)
+
+        model.load_state_dict(checkpoint['model_state_dict'])
+
+        if optimizer is not None and 'optimizer_state_dict' in checkpoint:
+                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+        # Return metadata
+        metadata = {k: v for k, v in checkpoint.items()
+                                if k not in ['model_state_dict', 'optimizer_state_dict']}
+        if 'parallel_strategy' in metadata:
+                metadata['parallel_strategy'] = _deserialize_strategy(metadata['parallel_strategy'])
+
+        return metadata
 
 
 def get_model_size(model):

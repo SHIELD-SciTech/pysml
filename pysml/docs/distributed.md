@@ -79,3 +79,74 @@ resets the state so the process can join a new job safely.
 Refer to :mod:`pysml.distributed.collectives` for thin wrappers around
 ``all_reduce``, ``broadcast``, ``all_gather`` and ``reduce_scatter`` that follow
 PySML's tensor semantics.
+
+## Composite Parallel Strategies
+
+PySML exposes a :class:`~pysml.distributed.ParallelStrategy` helper to describe
+how a model should be sharded across data, pipeline, and tensor parallel
+dimensions. The object keeps the configuration in a single place, validates it
+against the detected ``WORLD_SIZE``, and provides convenience constructors:
+
+```python
+from pysml.distributed import ParallelStrategy
+
+# Single convenience axis
+dp = ParallelStrategy.data(degree=4)
+tp = ParallelStrategy.tensor(degree=2, mode="2d", dims=(2, 1))
+pp = ParallelStrategy.pipeline(stages=3, schedule="1f1b", chunks=4)
+
+# Mixed configuration with checkpointed pipeline activations
+hybrid = ParallelStrategy.hybrid(
+    data=2,
+    pipeline=4,
+    tensor=2,
+    schedule="1f1b",
+    chunks=2,
+    activation_checkpoint=True,
+)
+```
+
+Calling :meth:`ParallelStrategy.apply` performs the wrapping order automatically
+(tensor parallel initialisation, followed by pipeline partitioning, then DDP
+replicas):
+
+```python
+model = TinyTransformerClassifier()
+strategy = ParallelStrategy.hybrid(data=2, pipeline=4, tensor=2)
+model = strategy.apply(model, pipeline_stages=custom_stages)
+```
+
+When ``pipeline_parallel`` exceeds ``1`` you must provide ``pipeline_stages`` –
+a list of :class:`~pysml.nn.Module` objects that represent each stage. PySML does
+not yet infer cross-rank partitions automatically. Tensor-parallel helpers are
+activated transparently via :func:`pysml.distributed.tensor_parallel.init_tensor_parallel`.
+
+```mermaid
+flowchart LR
+    subgraph Replica0[Data Replica 0]
+        P0S0(Stage 0 / TP Shard 0)
+        P0S1(Stage 1 / TP Shard 1)
+        P0S0 --> P0S1
+    end
+    subgraph Replica1[Data Replica 1]
+        P1S0(Stage 0 / TP Shard 0)
+        P1S1(Stage 1 / TP Shard 1)
+        P1S0 --> P1S1
+    end
+    P0S1 == gradient sync ==> P1S1
+```
+
+### Validation & Failure Modes
+
+``ParallelStrategy.validate()`` inspects the current process group and raises
+clear exceptions when a request cannot be fulfilled:
+
+| Symptom | Explanation | Fix |
+| --- | --- | --- |
+| ``tensor_parallel=4`` with ``WORLD_SIZE=2`` | Not enough ranks to host the requested tensor shards. | Launch more processes or reduce the tensor degree. |
+| ``pipeline_parallel>1`` without ``pipeline_stages`` | PySML cannot infer stage boundaries. | Pass an explicit list of stages to ``apply()``. |
+| ``data_parallel>1`` but ``WORLD_SIZE=1`` | DDP needs multiple processes. | Use ``torchrun``/``mpirun`` or lower the data parallel degree. |
+
+If the runtime runs on a single process the validation relaxes the relationship
+between pipeline degree and world size so you can prototype pipelined models on
+one device before scaling out.

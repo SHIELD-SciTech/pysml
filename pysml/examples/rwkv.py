@@ -5,10 +5,13 @@ with the primitives provided by ``pysml.nn``. The block keeps a running state to
 blend new keys/values with an exponential decay, applies simple channel mixing,
 and drives a classifier head.
 """
+from __future__ import annotations
+
 import numpy as np
 
 import pysml
 from pysml import Tensor
+from pysml.distributed import ParallelStrategy
 from pysml.nn import (
     Module,
     ModuleList,
@@ -19,7 +22,6 @@ from pysml.nn import (
     Adam,
     Sigmoid,
     Tanh,
-    PipelineModule,
 )
 
 
@@ -155,13 +157,15 @@ def generate_batch(batch_size: int, seq_len: int, vocab_size: int, num_classes: 
     return build_int_tensor(tokens), build_int_tensor(targets)
 
 
-def main() -> None:
+def main(strategy: ParallelStrategy | None = None) -> None:
     batch_size = 4
     seq_len = 32
     vocab_size = 256
     num_classes = 4
 
     model = TinyRWKVModel(vocab_size=vocab_size, num_classes=num_classes)
+    if strategy is not None:
+        model = strategy.apply(model)
     optimizer = Adam(model.parameters(), lr=1e-3)
     criterion = CrossEntropyLoss()
 
@@ -178,7 +182,9 @@ def main() -> None:
     demonstrate_pipeline_segments(vocab_size)
 
 
-def demonstrate_pipeline_segments(vocab_size: int) -> None:
+def demonstrate_pipeline_segments(
+    vocab_size: int, strategy: ParallelStrategy | None = None
+) -> None:
     model = TinyRWKVModel(vocab_size=vocab_size)
     mid = len(model.blocks) // 2 or 1
     first = ModuleList(list(model.blocks)[:mid])
@@ -189,7 +195,13 @@ def demonstrate_pipeline_segments(vocab_size: int) -> None:
         RWKVBlockStack(second),
         RWKVHeadStage(model.head),
     ]
-    pipeline = PipelineModule(stages, partitions=[1, 1, 1, 1], schedule="gpipe", chunks=4)
+    pipeline_strategy = strategy or ParallelStrategy.pipeline(
+        len(stages), schedule="gpipe", chunks=4
+    )
+    pipeline = pipeline_strategy.apply(
+        pipeline_stages=stages,
+        pipeline_kwargs={"partitions": [1, 1, 1, 1]},
+    )
     tokens, _ = generate_batch(batch_size=4, seq_len=32, vocab_size=vocab_size, num_classes=vocab_size)
     logits = pipeline(tokens)
     print("rwkv pipeline logits shape:", logits.shape)
