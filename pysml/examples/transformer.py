@@ -1,17 +1,11 @@
-"""Minimal Transformer encoder example for PySML.
-
-This script builds a tiny Transformer-based text classifier using the high level
-building blocks provided by ``pysml.nn``. It shows how to wire embeddings,
-positional encodings, ``TransformerEncoderLayer`` stacks, and a classification
-head together, then run a few dummy optimization steps.
-"""
+"""Minimal Transformer encoder example for PySML."""
 from __future__ import annotations
 
 import numpy as np
 
 import pysml
 from pysml import Tensor
-from pysml.distributed import ParallelStrategy
+from pysml.autograd import no_grad
 from pysml.nn import (
     Module,
     Embedding,
@@ -26,25 +20,14 @@ from pysml.nn import (
     SinusoidalPositionalEncoding,
 )
 
+from .parallel_utils import ExampleConfig
+
+
+DEFAULT_STEPS = 5
+
 
 class TinyTransformerClassifier(Module):
-    """Simple Transformer encoder classifier.
-
-    Parameters
-    ----------
-    vocab_size:
-        Number of tokens available to the embedding table.
-    d_model:
-        Hidden size of the Transformer blocks.
-    num_layers:
-        Number of encoder layers in the stack.
-    num_heads:
-        Attention heads per layer.
-    num_classes:
-        Output classes for the classifier head.
-    max_length:
-        Maximum sequence length supported by the positional encoding buffer.
-    """
+    """Simple Transformer encoder classifier."""
 
     def __init__(
         self,
@@ -71,13 +54,11 @@ class TinyTransformerClassifier(Module):
         self.head = Linear(d_model, num_classes)
 
     def forward(self, input_ids: Tensor) -> Tensor:
-        """Run the encoder and return logits of shape ``(batch, num_classes)``."""
-
         x = self.embedding(input_ids)
         x = self.position(x)
         x = self.encoder(x)
         x = self.output_norm(x)
-        pooled = x.mean(axis=1)  # Average pool over sequence length
+        pooled = x.mean(axis=1)
         return self.head(pooled)
 
 
@@ -171,8 +152,6 @@ class ProjectionStage(Module):
 
 
 def build_int_tensor(array: np.ndarray) -> Tensor:
-    """Create a Tensor wrapper around an integer array without casting to float."""
-
     tensor = Tensor(array, requires_grad=False)
     tensor.data = array.astype(np.int64, copy=False)
     tensor._requires_grad = False
@@ -180,41 +159,21 @@ def build_int_tensor(array: np.ndarray) -> Tensor:
     return tensor
 
 
-def generate_batch(batch_size: int, seq_len: int, vocab_size: int, num_classes: int):
-    tokens = np.random.randint(0, vocab_size, size=(batch_size, seq_len), dtype=np.int64)
-    targets = np.random.randint(0, num_classes, size=(batch_size,), dtype=np.int64)
+def generate_batch(
+    batch_size: int,
+    seq_len: int,
+    vocab_size: int,
+    num_classes: int,
+    *,
+    rng: np.random.Generator | None = None,
+):
+    rng = rng or np.random.default_rng()
+    tokens = rng.integers(0, vocab_size, size=(batch_size, seq_len), dtype=np.int64)
+    targets = rng.integers(0, num_classes, size=(batch_size,), dtype=np.int64)
     return build_int_tensor(tokens), build_int_tensor(targets)
 
 
-def main(strategy: ParallelStrategy | None = None) -> None:
-    batch_size = 8
-    seq_len = 32
-    vocab_size = 256
-    num_classes = 4
-
-    model = TinyTransformerClassifier(vocab_size=vocab_size, num_classes=num_classes)
-    if strategy is not None:
-        model = strategy.apply(model)
-    optimizer = AdamW(model.parameters(), lr=3e-4)
-    criterion = CrossEntropyLoss()
-
-    for step in range(5):
-        input_ids, targets = generate_batch(batch_size, seq_len, vocab_size, num_classes)
-        model.train()
-        optimizer.zero_grad()
-        logits = model(input_ids)
-        loss = criterion(logits, targets)
-        loss.backward()
-        optimizer.step()
-        print(f"step={step:02d} loss={loss.item():.4f}")
-
-    demonstrate_pipeline_split(vocab_size)
-
-
-def demonstrate_pipeline_split(
-    vocab_size: int, strategy: ParallelStrategy | None = None
-) -> None:
-    d_model = 64
+def build_transformer_stages(vocab_size: int, d_model: int = 64) -> list[Module]:
     src_embedding = Embedding(vocab_size, d_model)
     tgt_embedding = Embedding(vocab_size, d_model)
     src_position = SinusoidalPositionalEncoding(d_model, max_len=64)
@@ -238,28 +197,94 @@ def demonstrate_pipeline_split(
     encoder = TransformerEncoder(encoder_layer, 2)
     decoder = TransformerDecoder(decoder_layer, 2)
     head = Linear(d_model, vocab_size)
-    stages = [
+    return [
         SourceEmbeddingStage(src_embedding, src_position),
         EncoderStage(encoder),
         DecoderStage(decoder, tgt_embedding, tgt_position),
         ProjectionStage(head),
     ]
-    pipeline_strategy = strategy or ParallelStrategy.hybrid(
-        pipeline=len(stages),
-        schedule="1f1b",
-        chunks=2,
-        activation_checkpoint=True,
+
+
+def train_example(
+    config: ExampleConfig, steps: int = DEFAULT_STEPS, *, use_pipeline: bool = False
+) -> dict:
+    batch_size = 8
+    seq_len = 32
+    vocab_size = 256
+    num_classes = 4
+
+    np.random.seed(0)
+    base_model = TinyTransformerClassifier(
+        vocab_size=vocab_size, num_classes=num_classes
     )
-    pipeline = pipeline_strategy.apply(
-        pipeline_stages=stages,
+    if use_pipeline:
+        model = config.apply(
+            base_model,
+            pipeline_stages=build_transformer_stages(vocab_size),
+            pipeline_kwargs={"partitions": [1, 1, 1, 1]},
+        )
+    else:
+        model = config.apply(base_model)
+    optimizer = AdamW(model.parameters(), lr=3e-4)
+    criterion = CrossEntropyLoss()
+
+    rng = np.random.default_rng(0)
+    losses = []
+    for step in range(steps):
+        input_ids, targets = generate_batch(
+            batch_size, seq_len, vocab_size, num_classes, rng=rng
+        )
+        model.train()
+        optimizer.zero_grad()
+        logits = model(input_ids)
+        loss = criterion(logits, targets)
+        loss.backward()
+        optimizer.step()
+        value = float(loss.item())
+        losses.append(value)
+        print(f"[transformer/{config.device()}] step={step:02d} loss={value:.4f}")
+
+    demonstrate_pipeline_split(vocab_size, config=config)
+    return {"final_loss": losses[-1], "loss_history": losses}
+
+
+def deterministic_logits(config: ExampleConfig, seed: int = 0) -> Tensor:
+    np.random.seed(seed)
+    model = TinyTransformerClassifier()
+    model = config.apply(model)
+    model.eval()
+    rng = np.random.default_rng(seed)
+    tokens, _ = generate_batch(2, 16, 256, 4, rng=rng)
+    with no_grad():
+        logits = model(tokens)
+    return logits
+
+
+def demonstrate_pipeline_split(
+    vocab_size: int, config: ExampleConfig | None = None
+) -> None:
+    cfg = config or ExampleConfig()
+    pipeline = cfg.apply(
+        TinyTransformerClassifier(vocab_size=vocab_size),
+        pipeline_stages=build_transformer_stages(vocab_size),
         pipeline_kwargs={"partitions": [1, 1, 1, 1]},
     )
-    src, _ = generate_batch(batch_size=4, seq_len=16, vocab_size=vocab_size, num_classes=vocab_size)
-    tgt, _ = generate_batch(batch_size=4, seq_len=16, vocab_size=vocab_size, num_classes=vocab_size)
+    src, _ = generate_batch(
+        batch_size=4, seq_len=16, vocab_size=vocab_size, num_classes=vocab_size
+    )
+    tgt, _ = generate_batch(
+        batch_size=4, seq_len=16, vocab_size=vocab_size, num_classes=vocab_size
+    )
+    src = src.to(cfg.device())
+    tgt = tgt.to(cfg.device())
     logits = pipeline(src, tgt)
     metrics = pipeline.profile()
     print("pipeline logits shape:", logits.shape)
     print("pipeline metrics:", metrics)
+
+
+def main() -> None:
+    train_example(ExampleConfig())
 
 
 if __name__ == "__main__":
