@@ -80,6 +80,60 @@ Refer to :mod:`pysml.distributed.collectives` for thin wrappers around
 ``all_reduce``, ``broadcast``, ``all_gather`` and ``reduce_scatter`` that follow
 PySML's tensor semantics.
 
+### Fault Tolerance & Timeouts
+
+Collectives now honour the ``PYSML_COLLECTIVE_TIMEOUT`` and
+``PYSML_COLLECTIVE_RETRIES`` environment variables. Wrappers such as
+``pysml.distributed.all_reduce`` guard each operation with a configurable
+deadline and retry loop. When a timeout or failure occurs a
+``CollectiveOperationError`` is raised and subsequent collectives abort early to
+prevent additional deadlocks. This behaviour provides clear diagnostics for
+stalled ranks and keeps the remaining workers from hanging indefinitely.
+
+### Monitoring & Metrics Hooks
+
+Use :class:`pysml.distributed.DistributedMonitor` to collect throughput and loss
+metrics without sprinkling conditional ``if rank == 0`` checks through the
+training loop. The monitor supports context-managed batch timing, periodic
+reports, and callback hooks to integrate progress bars or experiment trackers.
+All metrics are aggregated with ``all_reduce`` so every log line represents the
+global view across ranks.
+
+```python
+from pysml.distributed import DistributedMonitor
+
+monitor = DistributedMonitor(total_steps=len(train_loader), log_every=20)
+for batch, target in train_loader:
+    loss = step(batch, target)
+    monitor.update(batch_size=len(batch), loss=float(loss))
+monitor.flush()  # final summary
+```
+
+### Distributed Checkpointing
+
+:mod:`pysml.distributed.checkpointing` exposes ``save_rank_checkpoint`` and
+``load_rank_checkpoint`` helpers that persist one shard per rank along with a
+``manifest.json`` describing the layout. The manifest enables elastic restarts
+– when the world size changes the loader maps new ranks onto the saved shards
+round-robin. Combine the helper with ``tensor_parallel_shard_state_dict`` to
+persist only the tensor-parallel slice owned by each worker.
+
+### Debugging Multi-Process Runs
+
+The :mod:`pysml.distributed.debugging` module adds two frequently requested
+tools:
+
+* ``launch_rank_repl`` opens an interactive console whose namespace already
+  contains ``rank`` and ``world_size`` so you can introspect local tensors
+  without leaving the running job.
+* ``register_gradient_anomaly_detector`` instruments a module with post-backward
+  hooks that flag NaNs, infinities, or exploding gradients. You can supply a
+  custom callback (for logging or paging) or rely on the default exception.
+
+These hooks are rank-local which makes them safe to enable even on large jobs –
+each worker only inspects its own gradients and reports anomalies with its rank
+ID for quick triage.
+
 ## Composite Parallel Strategies
 
 PySML exposes a :class:`~pysml.distributed.ParallelStrategy` helper to describe
@@ -150,3 +204,15 @@ clear exceptions when a request cannot be fulfilled:
 If the runtime runs on a single process the validation relaxes the relationship
 between pipeline degree and world size so you can prototype pipelined models on
 one device before scaling out.
+
+## Scaling & Resource Utilisation Best Practices
+
+* Prefer smaller ``log_every`` values in :class:`DistributedMonitor` when
+  experimenting; bump the interval for production runs to reduce log volume.
+* Set ``PYSML_COLLECTIVE_TIMEOUT`` to a value slightly higher than your longest
+  expected batch duration to automatically flag deadlocks.
+* When checkpointing, write shards to a shared filesystem and keep
+  ``manifest.json`` under version control – it documents the parallel strategy
+  and world size that produced the checkpoint.
+* Use ``register_gradient_anomaly_detector`` together with small batches before
+  scaling up so numerical issues are caught early.

@@ -15,6 +15,18 @@ from .collectives import (
     send,
 )
 from .ddp import DistributedDataParallel
+from .monitoring import AggregatedMetrics, DistributedMonitor
+from .checkpointing import (
+    CheckpointManifest,
+    load_rank_checkpoint,
+    save_rank_checkpoint,
+    tensor_parallel_shard_state_dict,
+)
+from .debugging import (
+    GradientAnomalyError,
+    launch_rank_repl,
+    register_gradient_anomaly_detector,
+)
 from .tensor_parallel import (
     TensorParallelGroup,
     gather_from_tensor_parallel_region,
@@ -58,6 +70,8 @@ __all__ = [
     "gather",
     "scatter",
     "DistributedDataParallel",
+    "DistributedMonitor",
+    "AggregatedMetrics",
     "TensorParallelGroup",
     "init_tensor_parallel",
     "get_tensor_parallel_group",
@@ -69,4 +83,11 @@ __all__ = [
     "partition_linear_features",
     "register_sharded_parameter",
     "ParallelStrategy",
+    "save_rank_checkpoint",
+    "load_rank_checkpoint",
+    "tensor_parallel_shard_state_dict",
+    "CheckpointManifest",
+    "launch_rank_repl",
+    "register_gradient_anomaly_detector",
+    "GradientAnomalyError",
 ]
