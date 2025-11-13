@@ -115,14 +115,20 @@ from .attention import (
 )
 
 from .transformer import (
-	TransformerEncoderLayer,
-	TransformerDecoderLayer,
-	TransformerEncoder,
-	TransformerDecoder,
-	Transformer,
-	GPTBlock,
-	GPTModel,
-	LLaMABlock,
+        TransformerEncoderLayer,
+        TransformerDecoderLayer,
+        TransformerEncoder,
+        TransformerDecoder,
+        Transformer,
+        GPTBlock,
+        GPTModel,
+        LLaMABlock,
+)
+
+from .parallel import (
+        ColumnParallelLinear,
+        RowParallelLinear,
+        TensorParallelMultiheadAttention,
 )
 
 from .positional import (

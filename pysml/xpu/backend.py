@@ -35,6 +35,16 @@ abs = absolute = ng.abs
 sign = ng.sign
 
 matmul = ng.matmul
+
+
+def tensor_parallel_matmul(input, weight, bias=None, transpose_weight=True):
+        """Tensor parallel friendly matmul that fuses bias when possible."""
+
+        right = ng.swapaxes(weight, -1, -2) if transpose_weight else weight
+        out = ng.matmul(input, right)
+        if bias is not None:
+                out = ng.add(out, bias)
+        return out
 dot = ng.dot
 outer = ng.outer
 inner = ng.inner

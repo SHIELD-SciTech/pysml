@@ -29,6 +29,16 @@ abs = absolute = np.abs
 sign = np.sign
 
 matmul = np.matmul
+
+
+def tensor_parallel_matmul(input, weight, bias=None, transpose_weight=True):
+        """Matmul helper that optionally transposes ``weight`` and adds ``bias``."""
+
+        right = np.swapaxes(weight, -1, -2) if transpose_weight else weight
+        result = np.matmul(input, right)
+        if bias is not None:
+                result = np.add(result, bias)
+        return result
 dot = np.dot
 outer = np.outer
 inner = np.inner
