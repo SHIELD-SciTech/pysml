@@ -11,8 +11,9 @@ autograd engine.
 from __future__ import annotations
 
 import gc
+import weakref
 from collections.abc import Sequence
-from typing import Optional, Union, TYPE_CHECKING
+from typing import Optional, Union, TYPE_CHECKING, Callable, Any
 
 
 if TYPE_CHECKING:
@@ -35,6 +36,7 @@ class Tensor:
         "_backend",
         "device",
         "active_device",
+        "_post_backward_hooks",
         "__weakref__",
     )
 
@@ -55,6 +57,7 @@ class Tensor:
         self.device = device_index
         self.active_device = device_string
         self.data = backend.convert(data, self._dtype, device=device_index)
+        self._post_backward_hooks: list[Callable[["Tensor"], None]] = []
 
     # ------------------------------------------------------------------
     # Gradient handling
@@ -77,6 +80,65 @@ class Tensor:
 
     def zero_grad(self) -> None:
         self._grad = None
+        if self._post_backward_hooks:
+            # Reset hook readiness state if hooks store local metadata.
+            # Hooks relying on cached information can use this signal to
+            # reschedule reductions.
+            for hook in list(self._post_backward_hooks):
+                if hasattr(hook, "reset"):
+                    try:
+                        hook.reset()  # type: ignore[attr-defined]
+                    except Exception:
+                        # Hooks are user supplied; failure to reset should
+                        # not crash gradient zeroing.
+                        pass
+
+    # ------------------------------------------------------------------
+    # Gradient hooks
+    # ------------------------------------------------------------------
+    class _PostBackwardHookHandle:
+        __slots__ = ("_tensor_ref", "_hook")
+
+        def __init__(self, tensor: "Tensor", hook: callable) -> None:
+            self._tensor_ref = weakref.ref(tensor)
+            self._hook = hook
+
+        def remove(self) -> None:
+            tensor = self._tensor_ref()
+            if tensor is not None:
+                tensor._remove_post_backward_hook(self._hook)
+            self._hook = None
+
+    def register_post_backward_hook(self, hook: callable) -> "Tensor._PostBackwardHookHandle":
+        """Register ``hook`` to be invoked after ``backward`` computes grads.
+
+        The hook receives the owning :class:`Tensor` instance as the sole
+        argument.  A :class:`handle <Tensor._PostBackwardHookHandle>` is
+        returned which can be used to remove the hook.
+        """
+
+        if not callable(hook):
+            raise TypeError("post-backward hook must be callable")
+        self._post_backward_hooks.append(hook)
+        return Tensor._PostBackwardHookHandle(self, hook)
+
+    def _remove_post_backward_hook(self, hook: callable) -> None:
+        try:
+            self._post_backward_hooks.remove(hook)
+        except ValueError:
+            pass
+
+    def _run_post_backward_hooks(self) -> None:
+        if not self._post_backward_hooks:
+            return
+        # Copy to guard against modifications during iteration
+        for hook in list(self._post_backward_hooks):
+            try:
+                hook(self)
+            except Exception:
+                # Hooks are user defined; swallow exceptions to avoid
+                # destabilising the autograd engine.
+                continue
 
     def backward(self, gradient: Optional["Tensor"] = None, retain_graph: bool = False) -> None:
         if not self._requires_grad:
@@ -147,6 +209,8 @@ class Tensor:
                             getattr(grad_value, "data", grad_value),
                         )
                         input_tensor._grad = input_tensor._new_like(summed, requires_grad=False)
+
+                input_tensor._run_post_backward_hooks()
 
         if not retain_graph:
             self._grad_fn = None
