@@ -1,7 +1,9 @@
 import os
 import unittest
 
-import numpy as np
+import pytest
+
+np = pytest.importorskip("numpy")
 
 from pysml import add, distributed
 from pysml.tensor import Tensor

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from . import collectives
 from .collectives import all_gather, all_reduce, barrier, broadcast, reduce_scatter
+from .ddp import DistributedDataParallel
 from .process_group import (
     get_backend,
     get_rank,
@@ -29,4 +30,5 @@ __all__ = [
     "all_gather",
     "reduce_scatter",
     "barrier",
+    "DistributedDataParallel",
 ]

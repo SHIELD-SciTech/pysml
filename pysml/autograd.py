@@ -1,6 +1,8 @@
 import weakref
 from typing import Callable, List, Tuple, Optional
 
+from .tensor import Tensor
+
 
 class Function:
 	def __init__(self, backward_fn: Callable, inputs: List, metadata: dict = None):
@@ -10,8 +12,16 @@ class Function:
 		self.metadata = metadata or {}
 		self.next_functions = []  # For graph traversal
 	
-	def apply_backward(self, grad_output):
-		return self.backward_fn(grad_output, *self.inputs, **self.metadata)
+        def apply_backward(self, grad_output):
+                return self.backward_fn(grad_output, *self.inputs, **self.metadata)
+
+
+def register_post_backward_hook(tensor: Tensor, hook: Callable[[Tensor], None]):
+        """Register a hook that fires after ``tensor`` receives its gradient."""
+
+        if not isinstance(tensor, Tensor):
+                raise TypeError("register_post_backward_hook expects a Tensor instance")
+        return tensor.register_post_backward_hook(hook)
 
 
 class no_grad:

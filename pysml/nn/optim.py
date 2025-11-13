@@ -1,11 +1,24 @@
 import math
+from __future__ import annotations
+
+from typing import Dict, Optional
+
+from pysml.distributed import process_group as _dist_pg
+from pysml.tensor import Tensor
 
 
 class Optimizer:
-	
-	def __init__(self, params, defaults):
-		self.defaults = defaults
-		self.state = {}
+
+        def __init__(self, params, defaults):
+                self.defaults = defaults
+                self.state = {}
+                _dist_pg.lazy_init_from_env()
+                backend = _dist_pg.get_backend()
+                self._dist_world_size = max(backend.world_size, 1)
+                self._dist_rank = backend.rank
+                self._state_sharding_enabled = False
+                self._state_offload_device: Optional[str] = None
+                self._owned_param_ids: set[int] = set()
 		
 		# Convert parameter iterator to list
 		if hasattr(params, '__iter__') and not isinstance(params, list):
@@ -24,9 +37,46 @@ class Optimizer:
 			self.param_groups = [{'params': params}]
 		
 		# Apply defaults to all groups
-		for group in self.param_groups:
-			for key, value in defaults.items():
-				group.setdefault(key, value)
+                for group in self.param_groups:
+                        for key, value in defaults.items():
+                                group.setdefault(key, value)
+
+        def configure_state_sharding(self, *, shard: bool = False, offload_to_cpu: bool = False) -> None:
+                """Configure optional optimizer state sharding/offload."""
+
+                self._state_sharding_enabled = shard
+                self._state_offload_device = "cpu" if offload_to_cpu else None
+                self._owned_param_ids.clear()
+                if shard and self._dist_world_size > 0:
+                        index = 0
+                        for group in self.param_groups:
+                                for param in group['params']:
+                                        if index % self._dist_world_size == self._dist_rank:
+                                                self._owned_param_ids.add(id(param))
+                                        index += 1
+
+        def _ensure_state_device(self, param_state: Dict, param) -> None:
+                if not param_state:
+                        return
+                target = getattr(param.data, 'active_device', None)
+                for key, value in list(param_state.items()):
+                        if isinstance(value, Tensor) and value.active_device != target:
+                                param_state[key] = value.to(target)
+
+        def _maybe_offload_state(self, param_state: Dict, param) -> None:
+                if not param_state:
+                        return
+                should_offload = False
+                if self._state_sharding_enabled and id(param) not in self._owned_param_ids:
+                        should_offload = True
+                if self._state_offload_device is not None:
+                        should_offload = True
+                if not should_offload:
+                        return
+                device = self._state_offload_device or 'cpu'
+                for key, value in list(param_state.items()):
+                        if isinstance(value, Tensor) and value.active_device != device:
+                                param_state[key] = value.to(device)
 	
 	def zero_grad(self):
 		for group in self.param_groups:
@@ -92,14 +142,15 @@ class SGD(Optimizer):
 					from .. import engine
 					d_p = engine.add(d_p, engine.multiply(p.data, weight_decay))
 				
-				# Apply momentum
-				if momentum != 0:
-					param_state = self.state.get(id(p), {})
-					
-					if 'momentum_buffer' not in param_state:
-						from .. import Tensor
-						buf = Tensor.__new__(Tensor)
-						buf._backend = p.data._backend
+                                # Apply momentum
+                                if momentum != 0:
+                                        param_state = self.state.get(id(p), {})
+                                        self._ensure_state_device(param_state, p)
+
+                                        if 'momentum_buffer' not in param_state:
+                                                from .. import Tensor
+                                                buf = Tensor.__new__(Tensor)
+                                                buf._backend = p.data._backend
 						buf._dtype = p.data._dtype
 						buf.device = p.data.device
 						buf.active_device = p.data.active_device
@@ -111,18 +162,19 @@ class SGD(Optimizer):
 						buf = param_state['momentum_buffer']
 						from .. import engine
 						# buf = momentum * buf + (1 - dampening) * d_p
-						buf.data = engine.add(
-							engine.multiply(buf, momentum),
-							engine.multiply(d_p, 1 - dampening)
-						).data
-					
+                                                buf.data = engine.add(
+                                                        engine.multiply(buf, momentum),
+                                                        engine.multiply(d_p, 1 - dampening)
+                                                ).data
+
 					if nesterov:
 						from .. import engine
 						d_p = engine.add(d_p, engine.multiply(buf, momentum))
-					else:
-						d_p = buf
-					
-					self.state[id(p)] = param_state
+                                        else:
+                                                d_p = buf
+
+                                        self.state[id(p)] = param_state
+                                        self._maybe_offload_state(param_state, p)
 				
 				# Update parameters
 				from .. import engine
@@ -161,8 +213,9 @@ class Adam(Optimizer):
 				
 				grad = p.grad
 				
-				# Initialize state
-				param_state = self.state.get(id(p), {})
+                                # Initialize state
+                                param_state = self.state.get(id(p), {})
+                                self._ensure_state_device(param_state, p)
 				
 				if len(param_state) == 0:
 					param_state['step'] = 0
@@ -264,10 +317,12 @@ class Adam(Optimizer):
 					eps
 				)
 				
-				update = engine.divide(exp_avg, denom_corrected)
-				p.data.data = engine.subtract(p.data, engine.multiply(update, step_size)).data
-				
-				self.state[id(p)] = param_state
+                                update = engine.divide(exp_avg, denom_corrected)
+                                p.data.data = engine.subtract(p.data, engine.multiply(update, step_size)).data
+
+                                self.state[id(p)] = param_state
+                                self._maybe_offload_state(param_state, p)
+                                self._maybe_offload_state(param_state, p)
 
 
 class AdamW(Optimizer):
@@ -302,10 +357,11 @@ class AdamW(Optimizer):
 				
 				grad = p.grad
 				
-				# Initialize state
-				param_state = self.state.get(id(p), {})
-				
-				if len(param_state) == 0:
+                                # Initialize state
+                                param_state = self.state.get(id(p), {})
+                                self._ensure_state_device(param_state, p)
+
+                                if len(param_state) == 0:
 					param_state['step'] = 0
 					
 					# Exponential moving average of gradient values
