@@ -2,16 +2,17 @@
 # Complete neural network library for building LLMs, diffusion models, CNNs, RNNs, and more
 
 from .module import (
-	Module,
-	Parameter,
-	Sequential,
-	ModuleList,
-	ModuleDict,
-	Identity,
-	get_parameter_count,
-	freeze_module,
-	unfreeze_module,
+        Module,
+        Parameter,
+        Sequential,
+        ModuleList,
+        ModuleDict,
+        Identity,
+        get_parameter_count,
+        freeze_module,
+        unfreeze_module,
 )
+from .pipeline import PipelineModule
 
 from .linear import (
 	Linear,
@@ -174,16 +175,17 @@ from .optim import (
 
 
 __all__ = [
-	# Module base classes
-	'Module',
-	'Parameter',
-	'Sequential',
-	'ModuleList',
-	'ModuleDict',
-	'Identity',
-	'get_parameter_count',
-	'freeze_module',
-	'unfreeze_module',
+        # Module base classes
+        'Module',
+        'Parameter',
+        'Sequential',
+        'ModuleList',
+        'ModuleDict',
+        'Identity',
+        'get_parameter_count',
+        'freeze_module',
+        'unfreeze_module',
+        'PipelineModule',
 	
 	# Linear layers
 	'Linear',

@@ -112,6 +112,22 @@ class CollectiveBackend(abc.ABC):
             raise ValueError("reduce_scatter expects at least one tensor")
         return tensors[0]
 
+    def send(self, tensor: Any, dst: int) -> Any:  # pragma: no cover - default no-op
+        return self._return_tensor(tensor)
+
+    def recv(self, tensor: Any, src: int) -> Any:  # pragma: no cover - default no-op
+        return self._return_tensor(tensor)
+
+    def gather(self, tensor: Any, dst: int = 0) -> list[Any]:  # pragma: no cover
+        if dst != self.rank:
+            return []
+        return [tensor]
+
+    def scatter(self, tensors: list[Any], src: int = 0) -> Any:  # pragma: no cover
+        if not tensors:
+            raise ValueError("scatter expects tensors to broadcast")
+        return tensors[0]
+
 
 class DummyBackend(CollectiveBackend):
     """Trivial backend used as a safe fallback."""

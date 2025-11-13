@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from typing import Any, Iterable, List
 
 from .routing import get_communicator
 
@@ -35,10 +35,37 @@ def barrier(device: str | None = None) -> None:
     communicator.barrier()
 
 
+def send(tensor: Any, dst: int) -> Any:
+    communicator = get_communicator(tensor)
+    return communicator.send(tensor, dst)
+
+
+def recv(tensor: Any, src: int) -> Any:
+    communicator = get_communicator(tensor)
+    return communicator.recv(tensor, src)
+
+
+def gather(tensor: Any, dst: int = 0) -> List[Any]:
+    communicator = get_communicator(tensor)
+    return communicator.gather(tensor, dst=dst)
+
+
+def scatter(tensors: Iterable[Any], src: int = 0) -> Any:
+    tensors = list(tensors)
+    if not tensors:
+        raise ValueError("scatter requires tensors")
+    communicator = get_communicator(tensors[0])
+    return communicator.scatter(tensors, src=src)
+
+
 __all__ = [
     "all_reduce",
     "broadcast",
     "all_gather",
     "reduce_scatter",
     "barrier",
+    "send",
+    "recv",
+    "gather",
+    "scatter",
 ]
