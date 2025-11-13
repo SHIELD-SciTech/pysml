@@ -16,6 +16,7 @@ from pysml.nn import (
     SiLU,
     MSELoss,
     AdamW,
+    PipelineModule,
 )
 
 
@@ -64,6 +65,43 @@ class TinyDiffusionUNet(Module):
         return self.conv_out(h3)
 
 
+class DownStage(Module):
+    def __init__(self, conv_in: Module, down: Module, downsample: Module) -> None:
+        super().__init__()
+        self.conv_in = conv_in
+        self.down = down
+        self.downsample = downsample
+
+    def forward(self, x: Tensor):
+        h1 = self.conv_in(x)
+        h2 = self.down(h1)
+        h3 = self.downsample(h2)
+        return h3, h2
+
+
+class MidStage(Module):
+    def __init__(self, mid: Module) -> None:
+        super().__init__()
+        self.mid = mid
+
+    def forward(self, encoded: Tensor, skip: Tensor):
+        return self.mid(encoded), skip
+
+
+class UpStage(Module):
+    def __init__(self, upsample: Module, up: Module, conv_out: Module) -> None:
+        super().__init__()
+        self.upsample = upsample
+        self.up = up
+        self.conv_out = conv_out
+
+    def forward(self, encoded: Tensor, skip: Tensor):
+        h3 = self.upsample(encoded)
+        h3 = pysml.add(h3, skip)
+        h3 = self.up(h3)
+        return self.conv_out(h3)
+
+
 def build_tensor(array: np.ndarray, requires_grad: bool = False) -> Tensor:
     return Tensor(array, requires_grad=requires_grad)
 
@@ -93,6 +131,22 @@ def main() -> None:
         loss.backward()
         optimizer.step()
         print(f"step={step:02d} loss={loss.item():.4f}")
+
+    demonstrate_pipeline_unet()
+
+
+def demonstrate_pipeline_unet() -> None:
+    model = TinyDiffusionUNet()
+    stages = [
+        DownStage(model.conv_in, model.down, model.downsample),
+        MidStage(model.mid),
+        UpStage(model.upsample, model.up, model.conv_out),
+    ]
+    pipeline = PipelineModule(stages, partitions=[1, 1, 1], schedule="gpipe", chunks=2)
+    inputs, _ = generate_batch(batch_size=2, channels=3, height=32, width=32)
+    preds = pipeline(inputs)
+    print("unet pipeline output shape:", preds.shape)
+    print("unet pipeline metrics:", pipeline.profile())
 
 
 if __name__ == "__main__":

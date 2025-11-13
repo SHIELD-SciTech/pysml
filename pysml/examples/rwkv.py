@@ -19,6 +19,7 @@ from pysml.nn import (
     Adam,
     Sigmoid,
     Tanh,
+    PipelineModule,
 )
 
 
@@ -103,6 +104,43 @@ class TinyRWKVModel(Module):
         return self.head(last)
 
 
+class RWKVEmbeddingStage(Module):
+    def __init__(self, embedding: Module) -> None:
+        super().__init__()
+        self.embedding = embedding
+
+    def forward(self, tokens: Tensor) -> Tensor:
+        return self.embedding(tokens)
+
+
+class RWKVBlockStack(Module):
+    def __init__(self, blocks: ModuleList) -> None:
+        super().__init__()
+        self.blocks = blocks
+
+    def forward(self, hidden: Tensor) -> Tensor:
+        batch_size = hidden.shape[0]
+        states = [block.init_state(batch_size) for block in self.blocks]
+        steps = pysml.split(hidden, 1, dim=1)
+        outputs = []
+        for step in steps:
+            step = pysml.squeeze(step, axis=1)
+            for idx, block in enumerate(self.blocks):
+                step, states[idx] = block(step, states[idx])
+            outputs.append(step)
+        return pysml.stack(outputs, axis=1)
+
+
+class RWKVHeadStage(Module):
+    def __init__(self, head: Module) -> None:
+        super().__init__()
+        self.head = head
+
+    def forward(self, hidden: Tensor) -> Tensor:
+        last = pysml.squeeze(hidden[:, -1:, :], axis=1)
+        return self.head(last)
+
+
 def build_int_tensor(array: np.ndarray) -> Tensor:
     tensor = Tensor(array, requires_grad=False)
     tensor.data = array.astype(np.int64, copy=False)
@@ -136,6 +174,26 @@ def main() -> None:
         loss.backward()
         optimizer.step()
         print(f"step={step:02d} loss={loss.item():.4f}")
+
+    demonstrate_pipeline_segments(vocab_size)
+
+
+def demonstrate_pipeline_segments(vocab_size: int) -> None:
+    model = TinyRWKVModel(vocab_size=vocab_size)
+    mid = len(model.blocks) // 2 or 1
+    first = ModuleList(list(model.blocks)[:mid])
+    second = ModuleList(list(model.blocks)[mid:])
+    stages = [
+        RWKVEmbeddingStage(model.embedding),
+        RWKVBlockStack(first),
+        RWKVBlockStack(second),
+        RWKVHeadStage(model.head),
+    ]
+    pipeline = PipelineModule(stages, partitions=[1, 1, 1, 1], schedule="gpipe", chunks=4)
+    tokens, _ = generate_batch(batch_size=4, seq_len=32, vocab_size=vocab_size, num_classes=vocab_size)
+    logits = pipeline(tokens)
+    print("rwkv pipeline logits shape:", logits.shape)
+    print("rwkv pipeline metrics:", pipeline.profile())
 
 
 if __name__ == "__main__":

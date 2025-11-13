@@ -3,7 +3,17 @@
 from __future__ import annotations
 
 from . import collectives
-from .collectives import all_gather, all_reduce, barrier, broadcast, reduce_scatter
+from .collectives import (
+    all_gather,
+    all_reduce,
+    barrier,
+    broadcast,
+    gather,
+    recv,
+    reduce_scatter,
+    scatter,
+    send,
+)
 from .ddp import DistributedDataParallel
 from .process_group import (
     get_backend,
@@ -30,5 +40,9 @@ __all__ = [
     "all_gather",
     "reduce_scatter",
     "barrier",
+    "send",
+    "recv",
+    "gather",
+    "scatter",
     "DistributedDataParallel",
 ]

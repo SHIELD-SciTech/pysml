@@ -158,6 +158,59 @@ class TorchDistributedBackend(CollectiveBackend):
         restores[0](output)
         return tensors[0]
 
+    def send(self, tensor: Any, dst: int) -> Any:  # pragma: no cover - depends on torch
+        if self.world_size <= 1 or dist is None or not dist.is_initialized():
+            return tensor
+        torch_tensor, _ = self._tensor_to_torch(tensor)
+        dist.send(torch_tensor, dst=dst)
+        return tensor
+
+    def recv(self, tensor: Any, src: int) -> Any:  # pragma: no cover - depends on torch
+        if self.world_size <= 1 or dist is None or not dist.is_initialized():
+            return tensor
+        torch_tensor, restore = self._tensor_to_torch(tensor)
+        dist.recv(torch_tensor, src=src)
+        restore(torch_tensor)
+        return tensor
+
+    def gather(self, tensor: Any, dst: int = 0) -> list[Any]:  # pragma: no cover
+        if self.world_size <= 1 or dist is None or not dist.is_initialized():
+            return [tensor]
+        torch_tensor, _ = self._tensor_to_torch(tensor)
+        if self.rank == dst:
+            gather_list = [torch.zeros_like(torch_tensor) for _ in range(self.world_size)]
+            dist.gather(torch_tensor, gather_list=gather_list, dst=dst)
+            results = []
+            for chunk in gather_list:
+                clone = _clone_tensor_like(tensor)
+                _update_tensor_from_torch(clone, chunk)
+                results.append(clone)
+            return results
+        dist.gather(torch_tensor, dst=dst)
+        return []
+
+    def scatter(self, tensors: list[Any], src: int = 0) -> Any:  # pragma: no cover
+        if not tensors:
+            raise ValueError("scatter expects tensors")
+        if self.world_size <= 1 or dist is None or not dist.is_initialized():
+            return tensors[0]
+        if self.rank == src:
+            torch_tensors = []
+            restores = []
+            for tensor in tensors:
+                torch_tensor, restore = self._tensor_to_torch(tensor)
+                torch_tensors.append(torch_tensor)
+                restores.append(restore)
+            output = torch.zeros_like(torch_tensors[0])
+            dist.scatter(output, scatter_list=torch_tensors, src=src)
+            restores[0](output)
+            return tensors[0]
+        placeholder = _clone_tensor_like(tensors[0])
+        torch_placeholder, restore = self._tensor_to_torch(placeholder)
+        dist.scatter(torch_placeholder, scatter_list=None, src=src)
+        restore(torch_placeholder)
+        return placeholder
+
 
 def _map_reduce_op(name: str):
     if dist is None:
