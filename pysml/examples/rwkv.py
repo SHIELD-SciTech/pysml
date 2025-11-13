@@ -1,17 +1,11 @@
-"""Minimal RWKV-style recurrent example for PySML.
-
-The goal is to demonstrate how to assemble a light-weight RWKV-inspired block
-with the primitives provided by ``pysml.nn``. The block keeps a running state to
-blend new keys/values with an exponential decay, applies simple channel mixing,
-and drives a classifier head.
-"""
+"""Minimal RWKV-style recurrent example for PySML."""
 from __future__ import annotations
 
 import numpy as np
 
 import pysml
 from pysml import Tensor
-from pysml.distributed import ParallelStrategy
+from pysml.autograd import no_grad
 from pysml.nn import (
     Module,
     ModuleList,
@@ -22,7 +16,13 @@ from pysml.nn import (
     Adam,
     Sigmoid,
     Tanh,
+    attention_free_time_mix,
 )
+
+from .parallel_utils import ExampleConfig
+
+
+DEFAULT_STEPS = 5
 
 
 class TinyRWKVBlock(Module):
@@ -57,11 +57,9 @@ class TinyRWKVBlock(Module):
         v = self.value(h)
         r = self.sigmoid(self.receptance(h))
 
-        decay = self.time_decay
-        avg_key = pysml.add(pysml.multiply(state["avg_key"], decay), pysml.multiply(k, 1 - decay))
-        avg_value = pysml.add(pysml.multiply(state["avg_value"], decay), pysml.multiply(v, 1 - decay))
-
-        mix = pysml.multiply(avg_key, avg_value)
+        mix, avg_key, avg_value = attention_free_time_mix(
+            state["avg_key"], state["avg_value"], k, v, self.time_decay
+        )
         gated = pysml.multiply(r, mix)
 
         channel = self.channel_norm(x + gated)
@@ -151,61 +149,109 @@ def build_int_tensor(array: np.ndarray) -> Tensor:
     return tensor
 
 
-def generate_batch(batch_size: int, seq_len: int, vocab_size: int, num_classes: int):
-    tokens = np.random.randint(0, vocab_size, size=(batch_size, seq_len), dtype=np.int64)
-    targets = np.random.randint(0, num_classes, size=(batch_size,), dtype=np.int64)
+def generate_batch(
+    batch_size: int,
+    seq_len: int,
+    vocab_size: int,
+    num_classes: int,
+    *,
+    rng: np.random.Generator | None = None,
+):
+    rng = rng or np.random.default_rng()
+    tokens = rng.integers(0, vocab_size, size=(batch_size, seq_len), dtype=np.int64)
+    targets = rng.integers(0, num_classes, size=(batch_size,), dtype=np.int64)
     return build_int_tensor(tokens), build_int_tensor(targets)
 
 
-def main(strategy: ParallelStrategy | None = None) -> None:
+def build_rwkv_stages(model: TinyRWKVModel) -> list[Module]:
+    mid = len(model.blocks) // 2 or 1
+    first = ModuleList(list(model.blocks)[:mid])
+    second = ModuleList(list(model.blocks)[mid:])
+    return [
+        RWKVEmbeddingStage(model.embedding),
+        RWKVBlockStack(first),
+        RWKVBlockStack(second),
+        RWKVHeadStage(model.head),
+    ]
+
+
+def train_example(
+    config: ExampleConfig, steps: int = DEFAULT_STEPS, *, use_pipeline: bool = False
+) -> dict:
     batch_size = 4
     seq_len = 32
     vocab_size = 256
     num_classes = 4
 
-    model = TinyRWKVModel(vocab_size=vocab_size, num_classes=num_classes)
-    if strategy is not None:
-        model = strategy.apply(model)
+    np.random.seed(0)
+    base_model = TinyRWKVModel(vocab_size=vocab_size, num_classes=num_classes)
+    if use_pipeline:
+        model = config.apply(
+            base_model,
+            pipeline_stages=build_rwkv_stages(base_model),
+            pipeline_kwargs={"partitions": [1, 1, 1, 1]},
+        )
+    else:
+        model = config.apply(base_model)
     optimizer = Adam(model.parameters(), lr=1e-3)
     criterion = CrossEntropyLoss()
 
-    for step in range(5):
-        input_ids, targets = generate_batch(batch_size, seq_len, vocab_size, num_classes)
+    rng = np.random.default_rng(0)
+    losses = []
+    for step in range(steps):
+        input_ids, targets = generate_batch(
+            batch_size, seq_len, vocab_size, num_classes, rng=rng
+        )
         model.train()
         optimizer.zero_grad()
         logits = model(input_ids)
         loss = criterion(logits, targets)
         loss.backward()
         optimizer.step()
-        print(f"step={step:02d} loss={loss.item():.4f}")
+        loss_value = float(loss.item())
+        losses.append(loss_value)
+        print(f"[rwkv/{config.device()}] step={step:02d} loss={loss_value:.4f}")
 
-    demonstrate_pipeline_segments(vocab_size)
+    demonstrate_pipeline_segments(vocab_size, config=config)
+    return {"final_loss": losses[-1], "loss_history": losses}
+
+
+def deterministic_logits(config: ExampleConfig, seed: int = 0) -> Tensor:
+    np.random.seed(seed)
+    model = TinyRWKVModel()
+    model = config.apply(model)
+    model.eval()
+    rng = np.random.default_rng(seed)
+    tokens, _ = generate_batch(2, 16, 256, 4, rng=rng)
+    with no_grad():
+        logits = model(tokens)
+    return logits
 
 
 def demonstrate_pipeline_segments(
-    vocab_size: int, strategy: ParallelStrategy | None = None
+    vocab_size: int, config: ExampleConfig | None = None
 ) -> None:
+    cfg = config or ExampleConfig()
     model = TinyRWKVModel(vocab_size=vocab_size)
-    mid = len(model.blocks) // 2 or 1
-    first = ModuleList(list(model.blocks)[:mid])
-    second = ModuleList(list(model.blocks)[mid:])
-    stages = [
-        RWKVEmbeddingStage(model.embedding),
-        RWKVBlockStack(first),
-        RWKVBlockStack(second),
-        RWKVHeadStage(model.head),
-    ]
-    pipeline_strategy = strategy or ParallelStrategy.pipeline(
-        len(stages), schedule="gpipe", chunks=4
-    )
-    pipeline = pipeline_strategy.apply(
-        pipeline_stages=stages,
+    pipeline = cfg.apply(
+        model,
+        pipeline_stages=build_rwkv_stages(model),
         pipeline_kwargs={"partitions": [1, 1, 1, 1]},
     )
-    tokens, _ = generate_batch(batch_size=4, seq_len=32, vocab_size=vocab_size, num_classes=vocab_size)
+    tokens, _ = generate_batch(
+        batch_size=4,
+        seq_len=32,
+        vocab_size=vocab_size,
+        num_classes=vocab_size,
+    )
+    tokens = tokens.to(cfg.device())
     logits = pipeline(tokens)
     print("rwkv pipeline logits shape:", logits.shape)
     print("rwkv pipeline metrics:", pipeline.profile())
+
+
+def main() -> None:
+    train_example(ExampleConfig())
 
 
 if __name__ == "__main__":

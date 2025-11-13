@@ -13,6 +13,10 @@ from .module import (
         unfreeze_module,
 )
 from .pipeline import PipelineModule
+from .functional import (
+        attention_free_time_mix,
+        convolutional_residual_block,
+)
 
 from .linear import (
 	Linear,
@@ -192,6 +196,8 @@ __all__ = [
         'freeze_module',
         'unfreeze_module',
         'PipelineModule',
+        'attention_free_time_mix',
+        'convolutional_residual_block',
 	
 	# Linear layers
 	'Linear',
