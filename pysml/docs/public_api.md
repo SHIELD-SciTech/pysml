@@ -17,9 +17,13 @@ This guide summarizes the stable surface area of PySML that is intended for down
 - **Layer catalog** – The package exports linear, convolutional, normalization, dropout, embedding, recurrent, attention, transformer, positional, and upsampling layers along with standard activation functions.【F:pysml/nn/__init__.py†L1-L142】
 - **Optimizers & losses** – SGD, Adam, AdamW, RMSprop, and diverse loss functions (`CrossEntropyLoss`, `MSELoss`, etc.) provide end-to-end training support without additional dependencies.【F:pysml/nn/__init__.py†L143-L213】
 
+## Distributed Runtime (`pysml.distributed`)
+- **Parallel strategy orchestration** – `ParallelStrategy` captures data/pipeline/tensor degrees, validates them against the active process group, and applies wrapping (tensor parallel initialisation, pipeline partitioning, DDP replication) in the correct order.【F:pysml/distributed/strategy.py†L1-L170】
+- **Collectives & DDP** – `DistributedDataParallel` plus helpers in `pysml.distributed.collectives` expose PyTorch-like APIs for gradient synchronization and process control.【F:pysml/distributed/ddp.py†L1-L200】【F:pysml/distributed/__init__.py†L1-L61】
+
 ## Persistence Utilities
-- **State serialization** – `save`/`load` wrap `pickle` with optional device remapping; `save_state_dict` and `load_state_dict` bridge Module checkpoints; `save_checkpoint` bundles optimizer state and metadata for resumable training.【F:pysml/save_load.py†L1-L63】
-- **Inspection helpers** – `get_model_size` calculates parameter counts and memory estimates, while `save_model_info` writes JSON metadata for reproducibility.【F:pysml/save_load.py†L64-L108】
+- **State serialization** – `save`/`load` wrap `pickle` with optional device remapping; `save_state_dict` and `load_state_dict` bridge Module checkpoints; `save_checkpoint` bundles optimizer state, distributed strategy metadata, and auxiliary metrics for resumable training.【F:pysml/save_load.py†L1-L110】
+- **Inspection helpers** – `get_model_size` calculates parameter counts and memory estimates, while `save_model_info` writes JSON metadata for reproducibility.【F:pysml/save_load.py†L112-L150】
 
 ## Documentation & Examples
 Consult `pysml/examples` for runnable Transformer, RWKV, and diffusion demos, and explore the rest of this `docs/` directory for subsystem deep dives.

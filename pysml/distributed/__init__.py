@@ -27,6 +27,7 @@ from .tensor_parallel import (
     register_sharded_parameter,
     scatter_to_tensor_parallel_region,
 )
+from .strategy import ParallelStrategy
 from .process_group import (
     get_backend,
     get_rank,
@@ -67,4 +68,5 @@ __all__ = [
     "scatter_to_tensor_parallel_region",
     "partition_linear_features",
     "register_sharded_parameter",
+    "ParallelStrategy",
 ]

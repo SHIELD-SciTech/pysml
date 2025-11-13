@@ -4,10 +4,13 @@ The script sketches a small noise-prediction network inspired by diffusion
 models. It demonstrates how to wire convolutional residual blocks, bilinear
 upsampling, and simple mean-squared-error training with synthetic data.
 """
+from __future__ import annotations
+
 import numpy as np
 
 import pysml
 from pysml import Tensor
+from pysml.distributed import ParallelStrategy
 from pysml.nn import (
     Module,
     Conv2d,
@@ -16,7 +19,6 @@ from pysml.nn import (
     SiLU,
     MSELoss,
     AdamW,
-    PipelineModule,
 )
 
 
@@ -113,12 +115,14 @@ def generate_batch(batch_size: int, channels: int, height: int, width: int):
     return build_tensor(noisy, requires_grad=False), build_tensor(noise, requires_grad=False)
 
 
-def main() -> None:
+def main(strategy: ParallelStrategy | None = None) -> None:
     batch_size = 2
     channels = 3
     height = width = 32
 
     model = TinyDiffusionUNet(in_channels=channels, base_channels=32)
+    if strategy is not None:
+        model = strategy.apply(model)
     optimizer = AdamW(model.parameters(), lr=2e-4)
     criterion = MSELoss()
 
@@ -135,14 +139,20 @@ def main() -> None:
     demonstrate_pipeline_unet()
 
 
-def demonstrate_pipeline_unet() -> None:
+def demonstrate_pipeline_unet(strategy: ParallelStrategy | None = None) -> None:
     model = TinyDiffusionUNet()
     stages = [
         DownStage(model.conv_in, model.down, model.downsample),
         MidStage(model.mid),
         UpStage(model.upsample, model.up, model.conv_out),
     ]
-    pipeline = PipelineModule(stages, partitions=[1, 1, 1], schedule="gpipe", chunks=2)
+    pipeline_strategy = strategy or ParallelStrategy.pipeline(
+        len(stages), schedule="gpipe", chunks=2
+    )
+    pipeline = pipeline_strategy.apply(
+        pipeline_stages=stages,
+        pipeline_kwargs={"partitions": [1, 1, 1]},
+    )
     inputs, _ = generate_batch(batch_size=2, channels=3, height=32, width=32)
     preds = pipeline(inputs)
     print("unet pipeline output shape:", preds.shape)
