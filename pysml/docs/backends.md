@@ -1,23 +1,55 @@
 # Backend Abstraction
 
-PySML keeps front-end code device agnostic by routing every tensor operation through a backend-specific implementation. Three backends ship with the framework.
+PySML keeps front-end code device agnostic by routing every tensor operation through backend adapters. Use the following cheat sheet to decide which backend to enable and how each maps to PyTorch/TensorFlow counterparts.
 
-## CPU (NumPy)
-- Always available and used as the fallback when other accelerators are missing. Helper functions report device metadata such as processor name, architecture, and core count.【F:pysml/cpu/__init__.py†L1-L55】
+## CPU Backend (`pysml.cpu`)
 
-## NVIDIA CUDA (CuPy)
-- Wraps CuPy arrays when available and falls back to NumPy otherwise. Conversion routines respect explicit device indices (e.g., `cuda:1`) and map common math primitives to CuPy implementations.【F:pysml/cuda/backend.py†L1-L84】
-- The public module exports `is_available()`, device enumeration, and synchronization helpers, mirroring PyTorch’s CUDA utilities.【F:pysml/cuda/__init__.py†L1-L5】
+- **Reference**: Implemented in `pysml/cpu/__init__.py`; always available.【F:pysml/cpu/__init__.py†L1-L55】
+- **What it does**: Wraps NumPy arrays, exposes device metadata (architecture, core count), and serves as the fallback when accelerators are absent.
+- **Used in scripts**: Default execution target for every example; e.g., running `pysml/examples/rwkv.py` without flags executes entirely on CPU.【F:pysml/examples/rwkv.py†L1-L255】
+- **Typical usage**:
+  ```python
+  from pysml import Tensor
 
-## Intel XPU (dpnp/dpctl)
-- Targets Intel GPUs through dpnp/dpctl with an interface parallel to the CUDA adapter. The module exposes availability checks and device helpers so code can switch to `tensor.xpu()` seamlessly.【F:pysml/xpu/__init__.py†L1-L5】
+  tensor = Tensor([[1, 2], [3, 4]], device="cpu")
+  ```
+- **Equivalent APIs**: PyTorch CPU tensors (`device="cpu"`), TensorFlow running on host via `/CPU:0`.
 
-## Backend Selection
-- Forward operators consult `_backend(*tensors)` to choose the highest-priority device among the inputs (CPU → XPU → CUDA). You can override this behavior by calling `.to(device)` or constructing tensors directly on the desired backend.【F:pysml/engine.py†L1-L32】【F:pysml/tensor.py†L58-L118】
+## NVIDIA CUDA Backend (`pysml.cuda`)
 
-## CUDA Toolkit Quick Checklist
-1. Install the matching CuPy wheel for your driver (`cupy-cuda11x` or `cupy-cuda12x`). The adapter automatically reuses NumPy as a fallback, so the import never explodes in CI environments without GPUs.【F:pysml/cuda/backend.py†L1-L40】
-2. Export `CUDA_VISIBLE_DEVICES` to restrict which cards PySML will see.
+- **Reference**: Adapter defined in `pysml/cuda/backend.py` with helpers re-exported via `pysml/cuda/__init__.py`.【F:pysml/cuda/backend.py†L1-L84】【F:pysml/cuda/__init__.py†L1-L5】
+- **What it does**: Uses CuPy arrays for data storage/computation, honors explicit device indices (e.g., `cuda:1`), and mirrors PyTorch’s CUDA utilities like `is_available()` and stream sync helpers.
+- **Used in scripts**: `ExampleConfig(device="cuda:0")` in any example migrates weights + tensors onto this backend for GPU acceleration.【F:pysml/examples/parallel_utils.py†L11-L83】
+- **Typical usage**:
+  ```python
+  if pysml.cuda.is_available():
+      logits = model(inputs.cuda())
+  ```
+- **Equivalent APIs**: `torch.cuda` device helpers, TensorFlow’s `/GPU:0` placements.
+
+### CUDA Toolkit Checklist
+1. Install the matching CuPy wheel for your driver (`cupy-cuda11x` or `cupy-cuda12x`).
+2. Export `CUDA_VISIBLE_DEVICES` if you want to mask GPUs from PySML.
+
+## Intel XPU Backend (`pysml.xpu`)
+
+- **Reference**: Thin adapter around dpnp/dpctl inside `pysml/xpu/__init__.py`.【F:pysml/xpu/__init__.py†L1-L5】
+- **What it does**: Provides Intel GPU tensors with APIs parallel to the CUDA adapter so `.xpu()` calls behave just like `.cuda()`.
+- **Used in scripts**: Distributed walkthrough rehearses pipeline splits on XPU hardware, and the example configs accept `backend="xpu"` to target these devices.【F:pysml/docs/distributed.md†L80-L160】
+- **Typical usage**:
+  ```python
+  if pysml.xpu.is_available():
+      batch = batch.to("xpu:0")
+      loss = model(batch).mean()
+  ```
+- **Equivalent APIs**: PyTorch’s `torch.xpu` (via Intel Extension for PyTorch), TensorFlow with oneAPI plugins (`/XPU:0`).
+
+## Backend Selection Logic
+
+- **Reference**: `_backend(*tensors)` in `pysml/engine.py` selects CPU → XPU → CUDA priority unless you override via `.to(device)`.【F:pysml/engine.py†L1-L32】
+- **What it does**: Keeps mixed-backend operations deterministic by running them on the “highest” accelerator present while falling back to CPU when needed.
+- **Used in scripts**: All ops issued by the example models go through this selection logic, enabling multi-backend parity with zero code changes.【F:pysml/examples/transformer.py†L41-L189】
+- **Equivalent APIs**: PyTorch’s device propagation rules, TensorFlow’s implicit device placement heuristics.
 3. Double-check `nvidia-smi` reports the same driver/runtime combo you compiled CuPy against; version mismatches usually manifest as `CUDA_ERROR_INVALID_DEVICE`. Reinstall the correct wheel if you upgraded your driver.
 4. Set `PYSML_DIST_DEVICE=cuda` when launching distributed jobs to force NCCL selection even if a CPU tensor is allocated first.【F:pysml/docs/distributed.md†L1-L54】
 

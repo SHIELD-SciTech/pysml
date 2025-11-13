@@ -7,6 +7,83 @@ package which automatically selects an appropriate backend (Gloo for CPU,
 NCCL for CUDA, oneCCL for Intel XPU) and gracefully falls back to local
 execution when the required libraries are missing.
 
+## Key APIs and Concepts
+
+### `init_process_group` / `shutdown`
+- **Reference**: Process bootstrap helpers inside `pysml/distributed/__init__.py`.【F:pysml/distributed/__init__.py†L1-L61】
+- **What it does**: Creates or tears down process groups using environment variables (`WORLD_SIZE`, `RANK`, etc.) plus optional overrides like `PYSML_INIT_METHOD`.
+- **Used in scripts**: Launcher snippets in every example refer to these helpers when demonstrating how to rehearse Transformer/RWKV splits on multi-device setups.【F:pysml/examples/transformer.py†L1-L200】
+- **Typical usage**:
+  ```python
+  from pysml.distributed import init_process_group, shutdown
+
+  init_process_group(backend="nccl")
+  ...  # training loop
+  shutdown()
+  ```
+- **Equivalent APIs**: `torch.distributed.init_process_group`, `tf.distribute.Server` initialization for multi-worker jobs.
+
+### Collective helpers (`all_reduce`, `broadcast`, ...)
+- **Reference**: Thin wrappers located in `pysml/distributed/collectives.py` and re-exported from the package init.【F:pysml/distributed/__init__.py†L1-L61】
+- **What it does**: Provide PyTorch-style functions that operate on PySML tensors, automatically selecting NCCL/Gloo/oneCCL based on device.
+- **Used in scripts**: Loss synchronization examples in this document demonstrate calling `all_reduce` inside multi-GPU loops; DDP wrappers rely on the same primitives under the hood.【F:pysml/docs/distributed.md†L1-L120】
+- **Typical usage**:
+  ```python
+  from pysml.distributed import all_reduce
+
+  loss = criterion(output, target)
+  all_reduce(loss)
+  loss /= world_size
+  ```
+- **Equivalent APIs**: `torch.distributed.all_reduce`, TensorFlow collective ops exposed via `tf.distribute.ReplicaContext.all_reduce`.
+
+### `ParallelStrategy`
+- **Reference**: High-level orchestrator in `pysml/distributed/strategy.py`.【F:pysml/distributed/strategy.py†L1-L170】
+- **What it does**: Encodes data/pipeline/tensor degrees, validates them against the current world size, and wraps modules in the correct order.
+- **Used in scripts**: `ExampleConfig.build_strategy()` feeds directly into `ParallelStrategy.apply()` so each example can toggle between pure data parallelism and hybrid schemes.【F:pysml/examples/parallel_utils.py†L11-L83】
+- **Typical usage**:
+  ```python
+  strategy = ParallelStrategy.hybrid(data=2, pipeline=2, tensor=2, schedule="gpipe")
+  model = strategy.apply(module, pipeline_stages=stages)
+  ```
+- **Equivalent APIs**: PyTorch combinations of DDP + pipeline modules + tensor-parallel sharding; TensorFlow’s `tf.distribute.MultiWorkerMirroredStrategy` combined with manual model partitioning.
+
+### `PipelineModule`
+- **Reference**: Prototype pipeline scheduler inside `pysml/nn/pipeline.py`.【F:pysml/nn/pipeline.py†L1-L220】
+- **What it does**: Splits sequential modules into stages, simulates GPipe/1F1B schedules, and records instrumentation; currently executes all stages in-process while stubbing out rank hand-offs.
+- **Used in scripts**: Transformer and RWKV examples create four-stage lists and feed them to `ParallelStrategy.pipeline(...)` to rehearse stage boundaries even though execution remains local.【F:pysml/examples/transformer.py†L119-L200】【F:pysml/examples/rwkv.py†L220-L280】
+- **Typical usage**:
+  ```python
+  stages = build_transformer_stages(vocab_size=256)
+  strategy = ParallelStrategy.pipeline(stages=len(stages), schedule="1f1b", chunks=4)
+  model = strategy.apply(pipeline_stages=stages)
+  ```
+- **Equivalent APIs**: `torch.distributed.pipeline.sync.PipelineModule`, TensorFlow’s GPipe implementations (e.g., Mesh TensorFlow), albeit PySML’s version is currently single-process only.
+
+### `DistributedMonitor`
+- **Reference**: Metrics helper in `pysml/distributed/monitor.py`.【F:pysml/distributed/monitor.py†L1-L160】
+- **What it does**: Aggregates throughput/loss metrics via all-reduce and prints rank-aware logs without scattering conditional statements through training loops.
+- **Used in scripts**: Showcased later in this document’s monitoring section, which mirrors how you might track RWKV or diffusion experiments on clusters.【F:pysml/docs/distributed.md†L80-L140】
+- **Typical usage**:
+  ```python
+  monitor = DistributedMonitor(total_steps=100)
+  monitor.update(batch_size=len(batch), loss=float(loss))
+  monitor.flush()
+  ```
+- **Equivalent APIs**: PyTorch Lightning/TorchMetrics progress trackers, TensorFlow’s `tf.keras.callbacks.History` combined with `tf.summary` logging.
+
+### Rank-aware checkpointing (`save_rank_checkpoint`, `load_rank_checkpoint`)
+- **Reference**: Helpers in `pysml/distributed/checkpointing.py`.【F:pysml/distributed/checkpointing.py†L1-L243】
+- **What it does**: Saves one shard per rank plus a manifest describing topology, allowing elastic restarts and tensor-parallel-aware persistence.
+- **Used in scripts**: Distributed doc’s checkpointing section shows how to pair these helpers with pipeline rehearsals so RWKV or diffusion jobs can resume after crashes.【F:pysml/docs/distributed.md†L140-L200】
+- **Typical usage**:
+  ```python
+  from pysml.distributed.checkpointing import save_rank_checkpoint
+
+  save_rank_checkpoint(model, optimizer, "./ckpt_dir")
+  ```
+- **Equivalent APIs**: PyTorch’s `torch.distributed.checkpoint` utilities, TensorFlow’s parameter-server-style `tf.train.Checkpoint` sharding.
+
 ## Environment Driven Initialisation
 
 The runtime inspects common launch environment variables when the first tensor
@@ -139,7 +216,9 @@ ID for quick triage.
 PySML exposes a :class:`~pysml.distributed.ParallelStrategy` helper to describe
 how a model should be sharded across data, pipeline, and tensor parallel
 dimensions. The object keeps the configuration in a single place, validates it
-against the detected ``WORLD_SIZE``, and provides convenience constructors:
+against the detected ``WORLD_SIZE``, and provides convenience constructors. The
+following listing mirrors the layout that PyTorch users are familiar with but
+adds explicit commentary about how the three axes interact:
 
 ```python
 from pysml.distributed import ParallelStrategy
@@ -149,7 +228,9 @@ dp = ParallelStrategy.data(degree=4)
 tp = ParallelStrategy.tensor(degree=2, mode="2d", dims=(2, 1))
 pp = ParallelStrategy.pipeline(stages=3, schedule="1f1b", chunks=4)
 
-# Mixed configuration with checkpointed pipeline activations
+# Mixed configuration with checkpointed pipeline activations. The constructor
+# always validates the request against WORLD_SIZE so you immediately discover
+# whether the current launch can host the desired hybrid layout.
 hybrid = ParallelStrategy.hybrid(
     data=2,
     pipeline=4,
@@ -169,6 +250,53 @@ model = TinyTransformerClassifier()
 strategy = ParallelStrategy.hybrid(data=2, pipeline=4, tensor=2)
 model = strategy.apply(model, pipeline_stages=custom_stages)
 ```
+
+### Distributed Pipeline Readiness (CPU, CUDA, and Intel XPU)
+
+`PipelineModule` currently runs every stage within a single process and uses
+collectives only to ship tensors to the next stage placeholder. There is no
+rank-to-rank rendezvous yet – the helper simply calls
+``dist_collectives.gather(..., dst=0)`` or ``send(..., dst=0)`` on each stage
+output while ignoring the optional ``stage_ranks`` argument. In practice this
+means pipeline parallel execution behaves like a highly instrumented sequential
+pass regardless of whether the tensors live on CPU, CUDA, or Intel XPU devices.
+The implementation is intentionally structured so distributed hand-off can be
+added later, but the necessary per-stage rank management is still missing.
+
+Consequently PySML is **not yet ready** for cross-rank pipeline parallelism on
+Intel XPUs (or any other backend). RWKV, Transformer, and Diffusion examples can
+be wrapped in `PipelineModule`, but each stage continues to execute within the
+local interpreter. Keep this limitation in mind when evaluating performance or
+memory scaling claims – today’s pipeline support provides scheduling and
+profiling scaffolding rather than genuine distributed execution.
+
+### Example: Prototyping RWKV Pipeline Splits on XPU
+
+Even without cross-rank communication you can rehearse stage boundaries on XPU
+hardware and gather profiling data. The example modules in ``pysml.examples``
+now document end-to-end snippets for CUDA, CPU, and XPU. A typical RWKV rehearsal
+looks like this:
+
+```python
+from pysml.examples import rwkv
+from pysml.examples.parallel_utils import ExampleConfig
+
+cfg = ExampleConfig(
+    backend="xpu",
+    pipeline_parallel=4,
+    pipeline_schedule="1f1b",
+    pipeline_chunks=4,
+    activation_checkpoint=True,
+)
+
+# Prints latency/memory metrics for each stage so you can tune partitions.
+rwkv.demonstrate_pipeline_segments(vocab_size=256, config=cfg)
+```
+
+The same pattern applies to the Transformer and Diffusion demonstrations – the
+`ExampleConfig` exposes the backend and pipeline knobs in one place, while each
+example exports ``train_example`` and ``demonstrate_pipeline_*`` helpers with
+rich docstrings describing the workflow.
 
 When ``pipeline_parallel`` exceeds ``1`` you must provide ``pipeline_stages`` –
 a list of :class:`~pysml.nn.Module` objects that represent each stage. PySML does

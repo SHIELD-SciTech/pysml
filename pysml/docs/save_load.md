@@ -1,23 +1,90 @@
 # Saving & Loading Models
 
-PySML’s persistence utilities live in `pysml.save_load` and focus on parity with familiar PyTorch workflows.
+PySML’s persistence helpers mirror PyTorch/TensorFlow workflows while adding distributed-friendly metadata. Each entry below identifies the relevant reference, describes its purpose, points to scripts that use it, and shows the analogous APIs in other frameworks.
 
 ## Core Helpers
-- `save(obj, path)` / `load(path)` – Serialize arbitrary Python objects (including tensors and state dicts) using `pickle`. Provide file paths or open file objects; optionally supply `map_location` during load to migrate tensors to a specific device.【F:pysml/save_load.py†L1-L39】
-- `save_state_dict(model, path)` / `load_state_dict(model, path, strict=True)` – Round-trip `Module.state_dict()` payloads for checkpoints.【F:pysml/save_load.py†L41-L55】
+
+### `save(obj, path)` / `load(path)`
+- **Reference**: Implemented at the top of `pysml/save_load.py`.【F:pysml/save_load.py†L1-L39】
+- **What it does**: Pickle arbitrary Python objects (model state dicts, optimizer state, metadata) and optionally remap tensors to a specific device via `map_location`.
+- **Used in scripts**: All examples describe saving their `state_dict()` payloads between runs to resume experiments quickly.【F:pysml/examples/transformer.py†L1-L189】【F:pysml/examples/rwkv.py†L1-L255】
+- **Typical usage**:
+  ```python
+  from pysml import save, load
+
+  save(model.state_dict(), "model.pkl")
+  state = load("model.pkl", map_location="cuda:0")
+  model.load_state_dict(state)
+  ```
+- **Equivalent APIs**: `torch.save` / `torch.load`, TensorFlow’s `tf.train.Checkpoint.save` / `.restore` (when serializing dictionaries).
+
+### `save_state_dict` / `load_state_dict`
+- **Reference**: Convenience wrappers following the base helpers.【F:pysml/save_load.py†L41-L55】
+- **What it does**: Persist or load a module’s `state_dict()` with strictness control, keeping parity with PyTorch semantics.
+- **Used in scripts**: Example configs mention these helpers when explaining how to checkpoint RWKV time-mix weights mid-training.【F:pysml/examples/rwkv.py†L205-L255】
+- **Equivalent APIs**: `torch.nn.Module.state_dict` + `load_state_dict`, TensorFlow’s `model.get_weights` / `set_weights`.
 
 ## Training Checkpoints
-- `save_checkpoint(model, optimizer, path, epoch=None, loss=None, **metadata)` packages model/optimizer state along with optional metrics, enabling resumable training loops.【F:pysml/save_load.py†L64-L110】
-- Pass `strategy=ParallelStrategy(...)` or `distributed_state={...}` to embed parallel configuration metadata directly inside the checkpoint. Strategies round-trip via `to_dict()` / `from_dict()` so distributed launches can validate their topology before resuming training.【F:pysml/save_load.py†L64-L110】
-- `load_checkpoint(model, optimizer, path, map_location=None)` restores state and returns any auxiliary metadata saved alongside the weights. When a serialized strategy is present it is rehydrated as a `ParallelStrategy` instance for immediate reuse.【F:pysml/save_load.py†L112-L130】
+
+### `save_checkpoint`
+- **Reference**: Mid-file helper bundling model, optimizer, epoch, loss, and metadata.【F:pysml/save_load.py†L64-L110】
+- **What it does**: Creates a single file containing both states plus user-defined scalars (e.g., epoch, validation loss) and optional `ParallelStrategy` info.
+- **Used in scripts**: Distributed guide describes saving RWKV/Transformer checkpoints between pipeline rehearsals so repeated launches can reuse weights.【F:pysml/docs/distributed.md†L120-L200】
+- **Typical usage**:
+  ```python
+  pysml.save_checkpoint(
+      model,
+      optimizer,
+      "checkpoint.pkl",
+      epoch=epoch,
+      loss=float(loss.item()),
+      strategy=strategy,
+  )
+  ```
+- **Equivalent APIs**: PyTorch’s pattern of saving `{"model": model.state_dict(), "optimizer": opt.state_dict()}`; TensorFlow’s `tf.train.Checkpoint` objects.
+
+### `load_checkpoint`
+- **Reference**: Companion loader below the saver.【F:pysml/save_load.py†L112-L130】
+- **What it does**: Restores model/optimizer weights, applies `map_location` if requested, and returns metadata (including serialized `ParallelStrategy`) for launch scripts.
+- **Used in scripts**: Example docstrings show reading metadata to resume training from the last epoch counter on any backend.【F:pysml/examples/diffusion.py†L146-L210】
+- **Equivalent APIs**: PyTorch’s `torch.load` + manual assignment, TensorFlow’s `Checkpoint.restore` with `expect_partial()`.
 
 ## Distributed Checkpoints & Elastic Restarts
-- `pysml.distributed.checkpointing.save_rank_checkpoint(model, optimizer, directory, shard_hook=None)` writes one shard per rank plus a `manifest.json` that records world size, tensor-parallel metadata, and file names. Provide `tensor_parallel_shard_state_dict` as the shard hook to persist only the local tensor slice when model weights are already partitioned.【F:pysml/distributed/checkpointing.py†L1-L190】
-- `load_rank_checkpoint(model, optimizer, directory, map_location=None)` consumes the manifest, maps the current rank onto the saved shards (wrapping when the new world size differs), restores model/optimizer state, and returns both manifest metadata and user-defined checkpoint metadata so launch scripts can rebuild strategies lazily.【F:pysml/distributed/checkpointing.py†L192-L243】
-- The manifest is human-readable JSON, making it easy to audit historical runs and to confirm which ranks produced which files when debugging storage or elasticity issues.【F:pysml/distributed/checkpointing.py†L13-L64】
+
+### `save_rank_checkpoint`
+- **Reference**: Located in `pysml/distributed/checkpointing.py`.【F:pysml/distributed/checkpointing.py†L1-L190】
+- **What it does**: Writes one shard per rank and emits a JSON manifest capturing world size, tensor-parallel metadata, and custom user annotations.
+- **Used in scripts**: Recommended in the distributed doc when you prototype tensor-parallel RWKV stages so each worker persists only its shard.【F:pysml/docs/distributed.md†L140-L200】
+- **Equivalent APIs**: `torch.distributed.checkpoint.save`, TensorFlow’s parameter-server sharding combined with `tf.train.Checkpoint`.
+
+### `load_rank_checkpoint`
+- **Reference**: Continuation of the distributed checkpoint module.【F:pysml/distributed/checkpointing.py†L192-L243】
+- **What it does**: Reads the manifest, maps current ranks to stored shards (wrapping when world size changes), and rebuilds metadata dictionaries.
+- **Used in scripts**: Elastic restart walkthrough uses this helper to migrate from 4-way to 8-way training without reinitializing models.【F:pysml/docs/distributed.md†L140-L200】
+- **Equivalent APIs**: `torch.distributed.checkpoint.load`, TensorFlow’s `tf.train.load_checkpoint` when paired with manual shard routing.
 
 ## Introspection
-- `get_model_size(model)` computes total/trainable parameter counts and estimates memory consumption assuming 32-bit floats.【F:pysml/save_load.py†L102-L123】
+
+### `get_model_size`
+- **Reference**: Utility near the end of `pysml/save_load.py`.【F:pysml/save_load.py†L102-L123】
+- **What it does**: Returns total/trainable parameter counts plus estimated memory usage.
+- **Used in scripts**: Benchmark helper prints these stats to contextualize throughput results for Transformer/RWKV/Diffusion runs.【F:pysml/examples/benchmark.py†L1-L120】
+- **Typical usage**:
+  ```python
+  stats = pysml.get_model_size(model)
+  print(stats)
+  ```
+- **Equivalent APIs**: `sum(p.numel() for p in model.parameters())` in PyTorch, `model.count_params()` in TensorFlow/Keras.
+
+### `save_model_info`
+- **Reference**: Helper that serializes JSON manifests for experiment tracking.【F:pysml/save_load.py†L123-L150】
+- **What it does**: Records class names, architecture descriptors, parameter counts, and optional metadata so you can catalog experiments.
+- **Used in scripts**: Benchmark utilities call this function after profiling to snapshot model settings alongside throughput numbers.【F:pysml/examples/benchmark.py†L1-L200】
+- **Typical usage**:
+  ```python
+  pysml.save_model_info(model, "model_info.json", extra={"throughput": samples_per_second})
+  ```
+- **Equivalent APIs**: PyTorch Lightning’s `Trainer.log_dir` summaries, TensorFlow’s `tf.summary` scalars combined with manual JSON dumps.
 - `save_model_info(model, path)` writes JSON summaries including architecture string and class name for quick experiment cataloging.【F:pysml/save_load.py†L123-L134】
 
 ## Future Formats
