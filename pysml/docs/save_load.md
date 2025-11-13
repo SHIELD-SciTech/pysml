@@ -11,6 +11,11 @@ PySML’s persistence utilities live in `pysml.save_load` and focus on parity wi
 - Pass `strategy=ParallelStrategy(...)` or `distributed_state={...}` to embed parallel configuration metadata directly inside the checkpoint. Strategies round-trip via `to_dict()` / `from_dict()` so distributed launches can validate their topology before resuming training.【F:pysml/save_load.py†L64-L110】
 - `load_checkpoint(model, optimizer, path, map_location=None)` restores state and returns any auxiliary metadata saved alongside the weights. When a serialized strategy is present it is rehydrated as a `ParallelStrategy` instance for immediate reuse.【F:pysml/save_load.py†L112-L130】
 
+## Distributed Checkpoints & Elastic Restarts
+- `pysml.distributed.checkpointing.save_rank_checkpoint(model, optimizer, directory, shard_hook=None)` writes one shard per rank plus a `manifest.json` that records world size, tensor-parallel metadata, and file names. Provide `tensor_parallel_shard_state_dict` as the shard hook to persist only the local tensor slice when model weights are already partitioned.【F:pysml/distributed/checkpointing.py†L1-L190】
+- `load_rank_checkpoint(model, optimizer, directory, map_location=None)` consumes the manifest, maps the current rank onto the saved shards (wrapping when the new world size differs), restores model/optimizer state, and returns both manifest metadata and user-defined checkpoint metadata so launch scripts can rebuild strategies lazily.【F:pysml/distributed/checkpointing.py†L192-L243】
+- The manifest is human-readable JSON, making it easy to audit historical runs and to confirm which ranks produced which files when debugging storage or elasticity issues.【F:pysml/distributed/checkpointing.py†L13-L64】
+
 ## Introspection
 - `get_model_size(model)` computes total/trainable parameter counts and estimates memory consumption assuming 32-bit floats.【F:pysml/save_load.py†L102-L123】
 - `save_model_info(model, path)` writes JSON summaries including architecture string and class name for quick experiment cataloging.【F:pysml/save_load.py†L123-L134】
