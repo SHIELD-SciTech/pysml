@@ -6,9 +6,9 @@ from typing import Any, Dict, Optional
 import numpy as np
 
 try:  # Avoid circular import on module load during setup
-        from .distributed.strategy import ParallelStrategy
+from .ddp.config.partition_config import ParallelStrategy
 except Exception:  # pragma: no cover - fallback for minimal builds
-        ParallelStrategy = None  # type: ignore
+ParallelStrategy = None  # type: ignore
 
 
 def save(obj, f, pickle_protocol=2):

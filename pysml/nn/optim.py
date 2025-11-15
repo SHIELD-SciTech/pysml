@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from typing import Dict, Optional
 
-from pysml.distributed import process_group as _dist_pg
 from pysml.tensor import Tensor
 
 
@@ -12,10 +11,8 @@ class Optimizer:
         def __init__(self, params, defaults):
                 self.defaults = defaults
                 self.state = {}
-                _dist_pg.lazy_init_from_env()
-                backend = _dist_pg.get_backend()
-                self._dist_world_size = max(backend.world_size, 1)
-                self._dist_rank = backend.rank
+                self._dist_world_size = 1
+                self._dist_rank = 0
                 self._state_sharding_enabled = False
                 self._state_offload_device: Optional[str] = None
                 self._owned_param_ids: set[int] = set()
