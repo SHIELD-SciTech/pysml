@@ -116,34 +116,38 @@ The following catalog explains each stable PySML API in plain language so newcom
   ```
 - **Equivalent APIs**: `torch.optim.AdamW`, `torch.nn.CrossEntropyLoss`, `tf.keras.optimizers.Adam`, `tf.keras.losses.SparseCategoricalCrossentropy`.
 
-## Distributed Runtime (`pysml.distributed`)
+## Distributed Runtime (`pysml.ddp`)
 
 ### `ParallelStrategy`
-- **Reference**: Configuration helper in `pysml/distributed/strategy.py`.【F:pysml/distributed/strategy.py†L1-L170】
-- **What it does**: Encapsulates data, pipeline, and tensor parallel degrees; validates topology; and wraps modules with tensor-parallel shards, pipeline partitions, and DDP replicas in a deterministic order.
-- **Used in scripts**: `ExampleConfig.build_strategy()` constructs hybrid strategies so the Transformer, RWKV, and diffusion demos can be launched with varying degrees of parallelism on CPU, CUDA, or Intel XPU.【F:pysml/examples/parallel_utils.py†L11-L83】
+- **Reference**: Configuration helper in `pysml/ddp/config/partition_config.py`.【F:pysml/ddp/config/partition_config.py†L1-L190】
+- **What it does**: Captures the desired degrees of data/pipeline/tensor parallelism, validates world-size requirements, and serializes into checkpoint metadata for later reuse.
+- **Used in scripts**: `ExampleConfig.build_strategy()` exposes these knobs to the Transformer, RWKV, and diffusion demos so you can plan heterogeneous launches ahead of time.【F:pysml/examples/parallel_utils.py†L1-L80】
 - **Typical usage**:
   ```python
-  from pysml.distributed import ParallelStrategy
+  from pysml.ddp import ParallelStrategy
 
-  strategy = ParallelStrategy.hybrid(data=2, pipeline=2, tensor=2, schedule="1f1b")
-  wrapped_model = strategy.apply(module, pipeline_stages=stages)
+  strategy = ParallelStrategy.hybrid(data=2, pipeline=2, tensor=1, schedule="1f1b")
+  metadata = strategy.to_dict()
+  restored = ParallelStrategy.from_dict(metadata)
+  restored.validate(world_size=4)
   ```
-- **Equivalent APIs**: PyTorch’s `torch.distributed.fsdp` + `torch.distributed.pipeline.sync.PipelineModule` combos; TensorFlow’s `tf.distribute.MultiWorkerMirroredStrategy`/`ParameterServerStrategy` stacks.
+- **Equivalent APIs**: PyTorch’s parallel strategy objects (`torch.distributed.pipeline.sync`, FSDP configs) or TensorFlow’s `tf.distribute` strategies, but implemented as pure dataclasses.
 
-### `DistributedDataParallel`
-- **Reference**: Implementation in `pysml/distributed/ddp.py`.【F:pysml/distributed/ddp.py†L1-L200】
-- **What it does**: Wraps `Module` instances to synchronize gradients via all-reduce, bucket optimizer state, and expose rank/world metadata.
-- **Used in scripts**: Advanced launcher templates reference DDP for scaling the provided examples once multi-process backends are configured; the distributed doc walks through rehearsal steps on Intel XPU hardware.【F:pysml/docs/distributed.md†L1-L200】
+### `PipelineParallel` / `DataParallel`
+- **Reference**: Wrappers in `pysml/ddp/parallel/pipeline_parallel.py` and `pysml/ddp/parallel/data_parallel.py`.【F:pysml/ddp/parallel/pipeline_parallel.py†L1-L70】【F:pysml/ddp/parallel/data_parallel.py†L1-L100】
+- **What they do**: `PipelineParallel` slices sequential modules into stage-specific `Sequential` blocks and feeds them through `pysml.nn.pipeline.PipelineModule` with configurable micro-batches, while `DataParallel` deep-copies a module across devices and concatenates per-replica outputs.
+- **Used in scripts**: The new DDP guide demonstrates wrapping the provided demos with these helpers when rehearsing CUDA/XPU splits on a single workstation.【F:pysml/docs/ddp.md†L62-L105】
 - **Typical usage**:
   ```python
-  from pysml.distributed import DistributedDataParallel as DDP
+  from pysml import ddp
 
-  ddp_model = DDP(model)
-  output = ddp_model(batch)
-  ddp_model.backward_and_sync(output, target)
+  PipelineModel = ddp.PipelineParallel(MySequentialModel, devices=["cuda:0", "cpu:0"], chunks=4)
+  pipeline = PipelineModel(config)
+
+  Replicated = ddp.DataParallel(lambda: pipeline, devices=["cuda:0", "cuda:1"])
+  data_parallel_model = Replicated()
   ```
-- **Equivalent APIs**: `torch.nn.parallel.DistributedDataParallel`, `tf.distribute.ReplicaContext.all_reduce` within mirrored strategies.
+- **Equivalent APIs**: `torch.distributed.pipeline.sync.PipelineModule` and `torch.nn.parallel.DistributedDataParallel`, but without NCCL/Gloo dependencies.
 
 ## Persistence Utilities (`pysml.save_load`)
 
@@ -164,7 +168,7 @@ The following catalog explains each stable PySML API in plain language so newcom
 ### `save_checkpoint` / `load_checkpoint`
 - **Reference**: Extended persistence helpers at the bottom of `pysml/save_load.py`.【F:pysml/save_load.py†L64-L130】
 - **What it does**: Capture model + optimizer state, epoch counters, loss metrics, and optional `ParallelStrategy` metadata so distributed runs can resume safely.
-- **Used in scripts**: Distributed walkthroughs show how to stash RWKV/Transformer states between pipeline rehearsal runs to avoid recomputing random inits.【F:pysml/docs/distributed.md†L120-L200】
+- **Used in scripts**: The custom DDP guide demonstrates persisting strategy metadata so RWKV/Transformer rehearsals can resume without rerunning expensive initialization steps.【F:pysml/docs/ddp.md†L105-L120】
 - **Typical usage**:
   ```python
   metadata = {"epoch": epoch, "loss": float(loss.item())}

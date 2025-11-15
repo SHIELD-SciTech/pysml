@@ -29,7 +29,7 @@ PySML’s persistence helpers mirror PyTorch/TensorFlow workflows while adding d
 ### `save_checkpoint`
 - **Reference**: Mid-file helper bundling model, optimizer, epoch, loss, and metadata.【F:pysml/save_load.py†L64-L110】
 - **What it does**: Creates a single file containing both states plus user-defined scalars (e.g., epoch, validation loss) and optional `ParallelStrategy` info.
-- **Used in scripts**: Distributed guide describes saving RWKV/Transformer checkpoints between pipeline rehearsals so repeated launches can reuse weights.【F:pysml/docs/distributed.md†L120-L200】
+- **Used in scripts**: The distributed runtime guide (`ddp.md`) shows how to persist parallel strategy metadata between rehearsal runs so repeated launches can reuse weights without recomputing initial states.【F:pysml/docs/ddp.md†L105-L120】
 - **Typical usage**:
   ```python
   pysml.save_checkpoint(
@@ -48,20 +48,6 @@ PySML’s persistence helpers mirror PyTorch/TensorFlow workflows while adding d
 - **What it does**: Restores model/optimizer weights, applies `map_location` if requested, and returns metadata (including serialized `ParallelStrategy`) for launch scripts.
 - **Used in scripts**: Example docstrings show reading metadata to resume training from the last epoch counter on any backend.【F:pysml/examples/diffusion.py†L146-L210】
 - **Equivalent APIs**: PyTorch’s `torch.load` + manual assignment, TensorFlow’s `Checkpoint.restore` with `expect_partial()`.
-
-## Distributed Checkpoints & Elastic Restarts
-
-### `save_rank_checkpoint`
-- **Reference**: Located in `pysml/distributed/checkpointing.py`.【F:pysml/distributed/checkpointing.py†L1-L190】
-- **What it does**: Writes one shard per rank and emits a JSON manifest capturing world size, tensor-parallel metadata, and custom user annotations.
-- **Used in scripts**: Recommended in the distributed doc when you prototype tensor-parallel RWKV stages so each worker persists only its shard.【F:pysml/docs/distributed.md†L140-L200】
-- **Equivalent APIs**: `torch.distributed.checkpoint.save`, TensorFlow’s parameter-server sharding combined with `tf.train.Checkpoint`.
-
-### `load_rank_checkpoint`
-- **Reference**: Continuation of the distributed checkpoint module.【F:pysml/distributed/checkpointing.py†L192-L243】
-- **What it does**: Reads the manifest, maps current ranks to stored shards (wrapping when world size changes), and rebuilds metadata dictionaries.
-- **Used in scripts**: Elastic restart walkthrough uses this helper to migrate from 4-way to 8-way training without reinitializing models.【F:pysml/docs/distributed.md†L140-L200】
-- **Equivalent APIs**: `torch.distributed.checkpoint.load`, TensorFlow’s `tf.train.load_checkpoint` when paired with manual shard routing.
 
 ## Introspection
 

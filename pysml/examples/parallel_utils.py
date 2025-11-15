@@ -4,8 +4,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from pysml.distributed import ParallelStrategy
+from pysml.ddp.config.partition_config import ParallelStrategy
 from pysml.nn import Module
+from pysml.nn.pipeline import PipelineModule
 
 
 @dataclass
@@ -62,24 +63,18 @@ class ExampleConfig:
         if pipeline_stages is not None:
             stages = [stage.to(self.device()) for stage in pipeline_stages]
 
-        strategy = self.build_strategy()
-
         if stages is not None:
-            if strategy is None:
-                strategy = ParallelStrategy.pipeline(
-                    len(stages),
-                    schedule=self.pipeline_schedule,
-                    chunks=self.pipeline_chunks,
-                    activation_checkpoint=self.activation_checkpoint,
-                )
-            kwargs = {"partitions": [1] * len(stages)}
+            kwargs = {
+                "partitions": [1] * len(stages),
+                "schedule": self.pipeline_schedule,
+                "chunks": self.pipeline_chunks,
+                "activation_checkpoint": self.activation_checkpoint,
+            }
             if pipeline_kwargs:
                 kwargs.update(pipeline_kwargs)
-            return strategy.apply(pipeline_stages=stages, pipeline_kwargs=kwargs)
+            return PipelineModule(stages, **kwargs)
 
-        if strategy is None:
-            return module
-        return strategy.apply(module)
+        return module
 
 
 __all__ = ["ExampleConfig"]
