@@ -9,7 +9,7 @@ from typing import Any, Optional, Sequence, Tuple
 
 import pysml
 from pysml import utils
-from pysml.distributed import collectives as dist_collectives
+from pysml.ddp.communication import primitives as dist_primitives
 from pysml.tensor import Tensor
 
 from .module import Module, ModuleList, Sequential
@@ -237,10 +237,10 @@ class PipelineModule(Module):
             return
         if self.communication == "gather":
             for tensor in tensors:
-                dist_collectives.gather(tensor, dst=0)
+                dist_primitives.gather(tensor, dst=0)
         else:
             for tensor in tensors:
-                dist_collectives.send(tensor, dst=0)
+                dist_primitives.send(tensor, dst=0)
 
     def _collect_tensors(self, payload: tuple[tuple[Any, ...], dict[str, Any]]) -> list[Tensor]:
         tensors: list[Tensor] = []

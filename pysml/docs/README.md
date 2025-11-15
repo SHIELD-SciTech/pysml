@@ -12,6 +12,6 @@ This directory is your onboarding ramp into PySML. Each guide mixes narrative co
 | [Backend Abstraction](backends.md) | Lists CPU/CUDA/XPU adapter capabilities and troubleshooting tips. | Use alongside `ExampleConfig` to select the right device before launching demos.【F:pysml/docs/backends.md†L1-L40】 |
 | [Tensor Memory Pooling](memory_pool.md) | Documents the buffer cache used during high-throughput workloads. | Enables deterministic benchmarking for the diffusion example.【F:pysml/docs/memory_pool.md†L1-L40】 |
 | [Saving & Loading Models](save_load.md) | Shows how to serialize checkpoints, gather stats, and plan for distributed recovery. | Shared across all demos that need resumable training.【F:pysml/docs/save_load.md†L1-L60】 |
-| [Distributed Training](distributed.md) | Walks through process groups, pipeline rehearsal, and parallel strategy composition. | Required reading before enabling DDP/pipeline modes in the provided scripts.【F:pysml/docs/distributed.md†L1-L80】 |
+| [Custom Distributed Runtime](ddp.md) | Explains the new communication primitives, partition planner, and pipeline/data parallel wrappers. | Required reading before wrapping demos with the DDP helpers introduced in `pysml/ddp/`.【F:pysml/docs/ddp.md†L1-L60】 |
 
 Each document now includes “reference / what it does / scripts / usage / equivalents” callouts per API entry to remove guesswork for new users. Contributions are welcome—please mirror the structure when documenting additional modules.

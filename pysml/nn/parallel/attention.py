@@ -9,7 +9,6 @@ from ..module import Module
 from ..dropout import Dropout
 from ... import engine
 from ...tensor import Tensor
-from ...distributed import tensor_parallel as tp
 from .linear import ColumnParallelLinear, RowParallelLinear
 
 
@@ -23,14 +22,14 @@ class TensorParallelMultiheadAttention(Module):
         *,
         dropout: float = 0.0,
         bias: bool = True,
-        group: Optional[tp.TensorParallelGroup] = None,
+        group: Optional[object] = None,
     ) -> None:
         super().__init__()
         if hidden_size % num_heads != 0:
             raise ValueError("hidden_size must be divisible by num_heads")
 
-        self.group = group or tp.get_tensor_parallel_group()
-        tp_size = self.group.size
+        self.group = group
+        tp_size = 1
         if num_heads % tp_size != 0:
             raise ValueError("num_heads must be divisible by tensor parallel size")
 

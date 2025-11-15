@@ -37,12 +37,10 @@ def restore_from_linear(output: Tensor, original_shape: Tuple[int, ...], out_fea
 def maybe_all_gather(tensor: Tensor, gather: bool, group) -> Tensor:
     if not gather:
         return tensor
-    from ...distributed.tensor_parallel import gather_from_tensor_parallel_region
-
-    return gather_from_tensor_parallel_region(tensor, dim=-1, group=group)
+    # Tensor-parallel collectives are not implemented in the custom DDP stack yet,
+    # so fall back to local execution.
+    return tensor
 
 
 def reduce_partial_output(tensor: Tensor, group) -> Tensor:
-    from ...distributed.tensor_parallel import reduce_from_tensor_parallel_region
-
-    return reduce_from_tensor_parallel_region(tensor, op="sum", group=group)
+    return tensor
