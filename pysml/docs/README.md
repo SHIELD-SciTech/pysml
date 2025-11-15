@@ -14,4 +14,13 @@ This directory is your onboarding ramp into PySML. Each guide mixes narrative co
 | [Saving & Loading Models](save_load.md) | Shows how to serialize checkpoints, gather stats, and plan for distributed recovery. | Shared across all demos that need resumable training.【F:pysml/docs/save_load.md†L1-L60】 |
 | [Custom Distributed Runtime](ddp.md) | Explains the new communication primitives, partition planner, and pipeline/data parallel wrappers. | Required reading before wrapping demos with the DDP helpers introduced in `pysml/ddp/`.【F:pysml/docs/ddp.md†L1-L105】 |
 
+## Distributed Training At a Glance
+
+1. Pick the devices you want to target (`"cuda:0"`, `"xpu:0"`, `"cpu"`).
+2. Register the communicator via `ddp.register_global_communicator(devices)`.
+3. Create a `ParallelStrategy` (or pass `devices` directly) and wrap your module with `ddp.PipelineParallel` and/or `ddp.DataParallel`.
+4. Launch one of the rehearsal scripts such as `python -m pysml.examples.ddp_transformer_xpu` to validate the plan before integrating it into your own training code.
+
+The [DDP guide](ddp.md) contains complete walkthroughs along with RWKV and Transformer snippets so you can mirror the same structure in custom projects.
+
 Each document now includes “reference / what it does / scripts / usage / equivalents” callouts per API entry to remove guesswork for new users. Contributions are welcome—please mirror the structure when documenting additional modules.

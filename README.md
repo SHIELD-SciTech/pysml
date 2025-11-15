@@ -7,6 +7,7 @@ PySML (Python Strategic Hardware-Independent Learning) is a research-grade deep 
 - **Composable autograd** – A minimal `Function` graph records backward closures for every op registered in `pysml.engine`, enabling custom differentiable primitives without boilerplate.
 - **Backend dispatch** – CPU (NumPy), CUDA (CuPy), and Intel XPU (dpnp/dpctl) backends share a common operator surface and can be toggled at runtime.
 - **PyTorch-inspired modules** – `pysml.nn` ships parameters, buffers, optimizers, attention layers, and Transformer building blocks ready for research-scale experiments.
+- **Custom distributed runtime** – `pysml.ddp` provides pipeline/data parallel wrappers and pure-Python communication primitives so you can rehearse heterogeneous launches without `torch.distributed`.
 - **First-party utilities** – Checkpointing, model-size reporting, memory pooling, and computation-graph visualization streamline day-to-day experimentation.
 
 > Personal note: The rewrite that unified attention, normalization, and optimizer utilities finally made it possible to port my Transformer notebooks between laptop CPU runs and datacenter GPUs without changing a line of model code.
@@ -102,9 +103,31 @@ for _ in range(10):
     optimizer.step()
 ```
 
+### 4. Scale out with the custom DDP runtime
+```python
+from pysml import ddp
+from pysml.examples.parallel_utils import ExampleConfig
+from pysml.examples.transformer import TinyTransformerClassifier
+
+devices = ["xpu:0", "xpu:1"]  # Works with CUDA or CPU strings as well
+ddp.register_global_communicator(devices)
+
+PipelineModel = ddp.PipelineParallel(
+    TinyTransformerClassifier,
+    devices=devices,
+    chunks=4,
+)
+model = PipelineModel(ExampleConfig())
+```
+Wrap any sequential module with `PipelineParallel` and optionally nest it inside
+`ddp.DataParallel` for replica-style batching. See the dedicated DDP guide for
+training/inference loops plus RWKV and Transformer launch scripts.
+
 ## Learn More
 - Browse the new [`pysml/docs`](pysml/docs/README.md) directory for subsystem guides, API references, and integration tips.
+- Read the [Custom Distributed Runtime guide](pysml/docs/ddp.md) for communicator setup, partition planning, and the `PipelineParallel` / `DataParallel` workflow.
 - Explore `pysml/examples/` for ready-to-run Transformer, RWKV, and diffusion demos.
+- Reuse the XPU-focused [Transformer](pysml/examples/ddp_transformer_xpu.py) and [RWKV](pysml/examples/ddp_rwkv_xpu.py) distributed rehearsal scripts as launch templates for your own models.
 - Experiment with extending `pysml.engine` and `pysml.autograd` to register custom operations alongside built-ins.
 
 > Personal note: I keep a scratchpad that registers experimental ops under `pysml.engine`—once the backward works, porting it into the main dispatcher takes only a few lines.
