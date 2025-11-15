@@ -101,5 +101,5 @@ These interfaces power PySML’s internals and evolve quickly. Use them when con
 ### Serialization placeholders (`export_onnx`, `save_safetensors`, ...)
 - **Reference**: Stub functions near the end of `pysml/save_load.py`.【F:pysml/save_load.py†L110-L150】
 - **What it does**: Raise `NotImplementedError` today but document the intended hooks for ONNX and Safetensors support.
-- **Used in scripts**: Not yet, but the distributed and persistence docs track these placeholders so contributors know where to add implementations.
+- **Used in scripts**: Not yet, but the DDP and persistence docs track these placeholders so contributors know where to add implementations.【F:pysml/docs/ddp.md†L1-L40】【F:pysml/docs/save_load.md†L1-L80】
 - **Equivalent APIs**: `torch.onnx.export`, `safetensors.torch.save_file`, TensorFlow’s `tf.saved_model.save`.

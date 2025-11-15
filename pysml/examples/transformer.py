@@ -7,7 +7,7 @@ This module contains two compact Transformer variants and demonstrates how to
 drive them through ``ExampleConfig`` for different backends (CPU, CUDA, Intel
 XPU) and degrees of data/pipeline/tensor parallelism. Every public helper has a
 docstring with inline snippets so you can copy/paste the exact invocation when
-experimenting with PySML's distributed features. The code is intentionally
+experimenting with PySML's custom DDP features. The code is intentionally
 verbose so the stage boundaries are obvious when feeding the network into
 ``PipelineModule``.
 """
@@ -228,7 +228,7 @@ def train_example(
     :class:`~pysml.examples.parallel_utils.ExampleConfig` and set
     ``use_pipeline=True`` to wrap the seq2seq model with ``PipelineModule``.
     Because PySML does not yet exchange tensors across ranks, pipeline mode
-    should be viewed as instrumentation rather than true distributed execution.
+    should be viewed as instrumentation rather than true multi-process execution.
     """
     batch_size = 8
     seq_len = 32

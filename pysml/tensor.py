@@ -13,11 +13,9 @@ from __future__ import annotations
 import gc
 import weakref
 from collections.abc import Sequence
-from typing import Optional, Union, TYPE_CHECKING, Callable, Any
+from typing import Optional, Union, Callable, Any
 
 
-if TYPE_CHECKING:
-    from pysml.distributed.backends.base import CollectiveBackend
 from .dtype import bf16
 
 DeviceLike = Union[str, "Tensor", None]
@@ -224,26 +222,9 @@ class Tensor:
 
     @property
     def device_type(self) -> str:
-        from .distributed.routing import get_device_type
-
-        device = get_device_type(self.active_device)
-        return device or 'cpu'
-
-    @property
-    def communicator(self) -> 'CollectiveBackend':
-        from . import distributed
-
-        return distributed.get_communicator(self)
-
-    def distributed_rank(self) -> int:
-        from . import distributed
-
-        return distributed.get_rank(self.device_type)
-
-    def distributed_world_size(self) -> int:
-        from . import distributed
-
-        return distributed.get_world_size(self.device_type)
+        if self.active_device is None:
+            return 'cpu'
+        return self.active_device.split(':', 1)[0]
 
     def to(
         self,
