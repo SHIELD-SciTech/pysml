@@ -41,7 +41,7 @@ pip install numpy
 
 ### From Source
 ```bash
-git clone https://github.com/your-org/pysml.git
+git clone https://github.com/SHIELD-SciTech/pysml.git
 cd pysml
 python -m pip install -e .
 ```
