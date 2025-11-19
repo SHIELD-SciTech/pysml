@@ -29,6 +29,16 @@ abs = absolute = np.abs
 sign = np.sign
 
 matmul = np.matmul
+
+
+def tensor_parallel_matmul(input, weight, bias=None, transpose_weight=True):
+        """Matmul helper that optionally transposes ``weight`` and adds ``bias``."""
+
+        right = np.swapaxes(weight, -1, -2) if transpose_weight else weight
+        result = np.matmul(input, right)
+        if bias is not None:
+                result = np.add(result, bias)
+        return result
 dot = np.dot
 outer = np.outer
 inner = np.inner
@@ -124,6 +134,8 @@ not_equal = np.not_equal
 less = np.less
 greater = np.greater
 greater_equal = np.greater_equal
+argmax = np.argmax
+argmin = np.argmin
 
 logical_and = np.logical_and
 logical_or = np.logical_or
@@ -398,9 +410,37 @@ def gather(x, dim, index):
 
 
 def scatter_add(x, dim, index, src):
-	result = x.copy()
-	np.add.at(result, index, src)
-	return result
+        if dim < 0:
+            dim += x.ndim
+
+        index = np.asarray(index)
+        src = np.asarray(src)
+
+        if x.ndim == 1 or src.ndim == 1:
+            np.add.at(x, index, src)
+            return x
+
+        if src.ndim == x.ndim:
+            grid = np.indices(src.shape, sparse=False)
+            idx = []
+            for axis in range(x.ndim):
+                if axis == dim:
+                    idx.append(index)
+                else:
+                    idx.append(grid[axis])
+            np.add.at(x, tuple(idx), src)
+            return x
+
+        if dim == 0 and x.ndim == 2 and src.ndim == index.ndim + 1:
+            rows = np.reshape(index, (-1, 1))
+            cols = np.arange(x.shape[1]).reshape(1, -1)
+            rows = np.broadcast_to(rows, (rows.shape[0], cols.shape[1]))
+            cols = np.broadcast_to(cols, rows.shape)
+            src_flat = np.reshape(src, rows.shape)
+            np.add.at(x, (rows, cols), src_flat)
+            return x
+
+        raise NotImplementedError("scatter_add configuration not supported on CPU backend")
 
 
 def masked_fill(x, mask, value):

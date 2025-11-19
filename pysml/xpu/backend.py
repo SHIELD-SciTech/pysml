@@ -35,6 +35,16 @@ abs = absolute = ng.abs
 sign = ng.sign
 
 matmul = ng.matmul
+
+
+def tensor_parallel_matmul(input, weight, bias=None, transpose_weight=True):
+        """Tensor parallel friendly matmul that fuses bias when possible."""
+
+        right = ng.swapaxes(weight, -1, -2) if transpose_weight else weight
+        out = ng.matmul(input, right)
+        if bias is not None:
+                out = ng.add(out, bias)
+        return out
 dot = ng.dot
 outer = ng.outer
 inner = ng.inner
@@ -150,6 +160,8 @@ not_equal = ng.not_equal
 less = ng.less
 greater = ng.greater
 greater_equal = ng.greater_equal
+argmax = ng.argmax
+argmin = ng.argmin
 
 logical_and = ng.logical_and
 logical_or = ng.logical_or
@@ -458,20 +470,82 @@ def gather(x, dim, index):
 
 
 def scatter_add(x, dim, index, src):
-	result = x.copy()
-	
-	if hasattr(ng, 'add') and hasattr(ng.add, 'at'):
-		ng.add.at(result, index, src)
-	else:
-		# Fallback to NumPy
-		import numpy as np
-		result_np = ng.asnumpy(result) if AVAILABLE else result
-		idx_np = ng.asnumpy(index) if AVAILABLE else index
-		src_np = ng.asnumpy(src) if AVAILABLE else src
-		np.add.at(result_np, idx_np, src_np)
-		result = ng.asarray(result_np) if AVAILABLE else result_np
-	
-	return result
+        if dim < 0:
+                dim += x.ndim
+
+        if AVAILABLE:
+                lib = ng
+        else:
+                import numpy as _np
+                lib = _np
+
+        index_arr = lib.asarray(index)
+        src_arr = lib.asarray(src)
+
+        def _broadcast(value, shape):
+                if hasattr(lib, 'broadcast_to'):
+                        return lib.broadcast_to(value, shape)
+                import numpy as np
+                if AVAILABLE:
+                        value_np = ng.asnumpy(value)
+                        broadcasted = np.broadcast_to(value_np, shape)
+                        return ng.asarray(broadcasted)
+                return np.broadcast_to(value, shape)
+
+        def _add_at(target, idx, values):
+                if hasattr(lib.add, 'at'):
+                        lib.add.at(target, idx, values)
+                else:
+                        import numpy as np
+                        if AVAILABLE:
+                                target_np = ng.asnumpy(target)
+                                idx_np = ng.asnumpy(idx)
+                                val_np = ng.asnumpy(values)
+                        else:
+                                target_np = target
+                                idx_np = idx
+                                val_np = values
+                        np.add.at(target_np, idx_np, val_np)
+                        if AVAILABLE:
+                                target[...] = ng.asarray(target_np)
+                        else:
+                                target[...] = target_np
+
+        if x.ndim == 1 or src_arr.ndim == 1:
+                _add_at(x, index_arr, src_arr)
+                return x
+
+        if src_arr.ndim == x.ndim:
+                if hasattr(lib, 'indices'):
+                        grid = lib.indices(src_arr.shape, sparse=False)
+                else:
+                        import numpy as np
+                        grid = np.indices(src_arr.shape, sparse=False)
+                        grid = lib.asarray(grid)
+                idx = []
+                for axis in range(x.ndim):
+                        if axis == dim:
+                                idx.append(index_arr)
+                        else:
+                                idx.append(grid[axis])
+                _add_at(x, tuple(idx), src_arr)
+                return x
+
+        if dim == 0 and x.ndim == 2 and src_arr.ndim == index_arr.ndim + 1:
+                rows = lib.reshape(index_arr, (-1, 1))
+                if hasattr(lib, 'arange'):
+                        cols = lib.arange(x.shape[1]).reshape(1, -1)
+                else:
+                        import numpy as np
+                        cols = np.arange(x.shape[1]).reshape(1, -1)
+                        cols = lib.asarray(cols)
+                rows = _broadcast(rows, (rows.shape[0], cols.shape[1]))
+                cols = _broadcast(cols, rows.shape)
+                src_flat = lib.reshape(src_arr, rows.shape)
+                _add_at(x, (rows, cols), src_flat)
+                return x
+
+        raise NotImplementedError("scatter_add configuration not supported on XPU backend")
 
 
 def masked_fill(x, mask, value):

@@ -40,6 +40,7 @@ from .engine import (
 )
 
 from . import utils
+from . import ddp
 
 from . import xpu
 from . import cuda
@@ -69,11 +70,11 @@ __all__ = [
 	# NEW operations
 	'softmax', 'log_softmax', 'gelu', 'silu',
 	'layer_norm', 'rms_norm', 'batch_norm', 'group_norm',
-	'dropout', 'embedding',
+        'dropout', 'embedding',
         'permute', 'unsqueeze', 'split',
         'gather', 'masked_fill',
-        'xpu', 'cuda', 'cpu'
+        'xpu', 'cuda', 'cpu', 'ddp'
 ]
 
-__version__ = '0.5.1'
+__version__ = '0.5.3'
 __all__.append('__version__')

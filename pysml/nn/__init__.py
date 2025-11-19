@@ -2,15 +2,20 @@
 # Complete neural network library for building LLMs, diffusion models, CNNs, RNNs, and more
 
 from .module import (
-	Module,
-	Parameter,
-	Sequential,
-	ModuleList,
-	ModuleDict,
-	Identity,
-	get_parameter_count,
-	freeze_module,
-	unfreeze_module,
+        Module,
+        Parameter,
+        Sequential,
+        ModuleList,
+        ModuleDict,
+        Identity,
+        get_parameter_count,
+        freeze_module,
+        unfreeze_module,
+)
+from .pipeline import PipelineModule
+from .functional import (
+        attention_free_time_mix,
+        convolutional_residual_block,
 )
 
 from .linear import (
@@ -114,14 +119,20 @@ from .attention import (
 )
 
 from .transformer import (
-	TransformerEncoderLayer,
-	TransformerDecoderLayer,
-	TransformerEncoder,
-	TransformerDecoder,
-	Transformer,
-	GPTBlock,
-	GPTModel,
-	LLaMABlock,
+        TransformerEncoderLayer,
+        TransformerDecoderLayer,
+        TransformerEncoder,
+        TransformerDecoder,
+        Transformer,
+        GPTBlock,
+        GPTModel,
+        LLaMABlock,
+)
+
+from .parallel import (
+        ColumnParallelLinear,
+        RowParallelLinear,
+        TensorParallelMultiheadAttention,
 )
 
 from .positional import (
@@ -174,16 +185,19 @@ from .optim import (
 
 
 __all__ = [
-	# Module base classes
-	'Module',
-	'Parameter',
-	'Sequential',
-	'ModuleList',
-	'ModuleDict',
-	'Identity',
-	'get_parameter_count',
-	'freeze_module',
-	'unfreeze_module',
+        # Module base classes
+        'Module',
+        'Parameter',
+        'Sequential',
+        'ModuleList',
+        'ModuleDict',
+        'Identity',
+        'get_parameter_count',
+        'freeze_module',
+        'unfreeze_module',
+        'PipelineModule',
+        'attention_free_time_mix',
+        'convolutional_residual_block',
 	
 	# Linear layers
 	'Linear',

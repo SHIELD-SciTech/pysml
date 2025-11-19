@@ -1,6 +1,8 @@
 import weakref
 from typing import Callable, List, Tuple, Optional
 
+from .tensor import Tensor
+
 
 class Function:
 	def __init__(self, backward_fn: Callable, inputs: List, metadata: dict = None):
@@ -10,8 +12,16 @@ class Function:
 		self.metadata = metadata or {}
 		self.next_functions = []  # For graph traversal
 	
-	def apply_backward(self, grad_output):
-		return self.backward_fn(grad_output, *self.inputs, **self.metadata)
+        def apply_backward(self, grad_output):
+                return self.backward_fn(grad_output, *self.inputs, **self.metadata)
+
+
+def register_post_backward_hook(tensor: Tensor, hook: Callable[[Tensor], None]):
+        """Register a hook that fires after ``tensor`` receives its gradient."""
+
+        if not isinstance(tensor, Tensor):
+                raise TypeError("register_post_backward_hook expects a Tensor instance")
+        return tensor.register_post_backward_hook(hook)
 
 
 class no_grad:
@@ -1145,31 +1155,40 @@ def backward_embedding(grad_output, input_ref, **metadata):
 	
 	input_tensor = input_ref() if input_ref else None
 	
-	if input_tensor and input_tensor._requires_grad:
-		backend = grad_output._backend
-		indices = metadata.get('indices')
-		num_embeddings = metadata.get('num_embeddings')
-		
-		grad = type(grad_output).__new__(type(grad_output))
-		grad._backend = backend
-		grad._dtype = grad_output._dtype
-		grad.device = grad_output.device
-		grad.active_device = grad_output.active_device
-		
-		# Create zero gradient for full embedding table
-		embedding_dim = input_tensor.shape[-1]
-		grad_shape = (num_embeddings, embedding_dim)
-		grad.data = backend.zeros(grad_shape)
-		
-		# Scatter add gradients at indices
-		# This is a simplified version - proper implementation needs scatter_add
-		# For now, we'll note that this needs backend support
-		grad._requires_grad = False
-		grad._grad = None
-		grad._grad_fn = None
-		grad.metadata = {'indices': indices, 'grad_output': grad_output.data}
-		
-		grads.append((input_tensor, grad))
+        if input_tensor and input_tensor._requires_grad:
+                backend = grad_output._backend
+                indices = metadata.get('indices')
+                num_embeddings = metadata.get('num_embeddings')
+
+                grad = type(grad_output).__new__(type(grad_output))
+                grad._backend = backend
+                grad._dtype = grad_output._dtype
+                grad.device = grad_output.device
+                grad.active_device = grad_output.active_device
+
+                embedding_dim = input_tensor.shape[-1]
+                grad_shape = (num_embeddings, embedding_dim)
+                grad.data = backend.zeros(grad_shape, dtype=grad_output.data.dtype)
+
+                if hasattr(indices, 'data'):
+                        indices_data = indices.data
+                else:
+                        indices_data = indices
+
+                indices_array = backend.asarray(indices_data)
+
+                backend.scatter_add(
+                        grad.data,
+                        0,
+                        indices_array,
+                        grad_output.data,
+                )
+
+                grad._requires_grad = False
+                grad._grad = None
+                grad._grad_fn = None
+
+                grads.append((input_tensor, grad))
 	else:
 		grads.append(None)
 	
@@ -1267,29 +1286,44 @@ def backward_max_reduce(grad_output, input_ref, **metadata):
 	
 	input_tensor = input_ref() if input_ref else None
 	
-	if input_tensor and input_tensor._requires_grad:
-		backend = grad_output._backend
-		axis = metadata.get('axis', None)
-		keepdims = metadata.get('keepdims', False)
-		max_indices = metadata.get('max_indices')  # From forward pass
-		
-		grad = type(grad_output).__new__(type(grad_output))
-		grad._backend = backend
-		grad._dtype = grad_output._dtype
-		grad.device = grad_output.device
-		grad.active_device = grad_output.active_device
-		
-		# Create zero gradient
-		grad.data = backend.zeros_like(input_tensor.data)
-		
-		# This is simplified - proper implementation needs scatter operations
-		# Gradient should be scattered to positions where max occurred
-		grad._requires_grad = False
-		grad._grad = None
-		grad._grad_fn = None
-		grad.metadata = {'max_indices': max_indices, 'grad_output': grad_output.data}
-		
-		grads.append((input_tensor, grad))
+        if input_tensor and input_tensor._requires_grad:
+                backend = grad_output._backend
+                axis = metadata.get('axis', None)
+                keepdims = metadata.get('keepdims', False)
+                max_indices = metadata.get('max_indices')
+
+                grad = type(grad_output).__new__(type(grad_output))
+                grad._backend = backend
+                grad._dtype = grad_output._dtype
+                grad.device = grad_output.device
+                grad.active_device = grad_output.active_device
+
+                grad.data = backend.zeros_like(input_tensor.data)
+
+                if axis is None:
+                        flat_grad = backend.reshape(grad.data, (-1,))
+                        grad_value = grad_output.data
+                        grad_value = backend.reshape(grad_value, (-1,))
+                        if grad_value.shape[0] != 1:
+                                grad_value = backend.reshape(grad_value, (1,))
+
+                        index_array = backend.asarray([max_indices])
+                        backend.scatter_add(flat_grad, 0, index_array, grad_value)
+                else:
+                        grad_values = grad_output.data
+                        indices = max_indices
+
+                        if not keepdims:
+                                grad_values = backend.expand_dims(grad_values, axis=axis)
+                                indices = backend.expand_dims(indices, axis=axis)
+
+                        backend.scatter_add(grad.data, axis, indices, grad_values)
+
+                grad._requires_grad = False
+                grad._grad = None
+                grad._grad_fn = None
+
+                grads.append((input_tensor, grad))
 	else:
 		grads.append(None)
 	
@@ -1306,28 +1340,44 @@ def backward_min_reduce(grad_output, input_ref, **metadata):
 	
 	input_tensor = input_ref() if input_ref else None
 	
-	if input_tensor and input_tensor._requires_grad:
-		backend = grad_output._backend
-		axis = metadata.get('axis', None)
-		keepdims = metadata.get('keepdims', False)
-		min_indices = metadata.get('min_indices')  # From forward pass
-		
-		grad = type(grad_output).__new__(type(grad_output))
-		grad._backend = backend
-		grad._dtype = grad_output._dtype
-		grad.device = grad_output.device
-		grad.active_device = grad_output.active_device
-		
-		# Create zero gradient
-		grad.data = backend.zeros_like(input_tensor.data)
-		
-		# Gradient should be scattered to positions where min occurred
-		grad._requires_grad = False
-		grad._grad = None
-		grad._grad_fn = None
-		grad.metadata = {'min_indices': min_indices, 'grad_output': grad_output.data}
-		
-		grads.append((input_tensor, grad))
+        if input_tensor and input_tensor._requires_grad:
+                backend = grad_output._backend
+                axis = metadata.get('axis', None)
+                keepdims = metadata.get('keepdims', False)
+                min_indices = metadata.get('min_indices')
+
+                grad = type(grad_output).__new__(type(grad_output))
+                grad._backend = backend
+                grad._dtype = grad_output._dtype
+                grad.device = grad_output.device
+                grad.active_device = grad_output.active_device
+
+                grad.data = backend.zeros_like(input_tensor.data)
+
+                if axis is None:
+                        flat_grad = backend.reshape(grad.data, (-1,))
+                        grad_value = grad_output.data
+                        grad_value = backend.reshape(grad_value, (-1,))
+                        if grad_value.shape[0] != 1:
+                                grad_value = backend.reshape(grad_value, (1,))
+
+                        index_array = backend.asarray([min_indices])
+                        backend.scatter_add(flat_grad, 0, index_array, grad_value)
+                else:
+                        grad_values = grad_output.data
+                        indices = min_indices
+
+                        if not keepdims:
+                                grad_values = backend.expand_dims(grad_values, axis=axis)
+                                indices = backend.expand_dims(indices, axis=axis)
+
+                        backend.scatter_add(grad.data, axis, indices, grad_values)
+
+                grad._requires_grad = False
+                grad._grad = None
+                grad._grad_fn = None
+
+                grads.append((input_tensor, grad))
 	else:
 		grads.append(None)
 	
