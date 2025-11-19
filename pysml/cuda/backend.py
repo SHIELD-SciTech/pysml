@@ -149,6 +149,8 @@ not_equal = cp.not_equal
 less = cp.less
 greater = cp.greater
 greater_equal = cp.greater_equal
+argmax = cp.argmax
+argmin = cp.argmin
 
 logical_and = cp.logical_and
 logical_or = cp.logical_or
@@ -439,9 +441,37 @@ def gather(x, dim, index):
 
 
 def scatter_add(x, dim, index, src):
-	result = x.copy()
-	cp.add.at(result, index, src)  # GPU atomic operations
-	return result
+        if dim < 0:
+                dim += x.ndim
+
+        index = cp.asarray(index)
+        src = cp.asarray(src)
+
+        if x.ndim == 1 or src.ndim == 1:
+            cp.add.at(x, index, src)
+            return x
+
+        if src.ndim == x.ndim:
+            grid = cp.indices(src.shape, sparse=False)
+            idx = []
+            for axis in range(x.ndim):
+                if axis == dim:
+                    idx.append(index)
+                else:
+                    idx.append(grid[axis])
+            cp.add.at(x, tuple(idx), src)
+            return x
+
+        if dim == 0 and x.ndim == 2 and src.ndim == index.ndim + 1:
+            rows = cp.reshape(index, (-1, 1))
+            cols = cp.arange(x.shape[1]).reshape(1, -1)
+            rows = cp.broadcast_to(rows, (rows.shape[0], cols.shape[1]))
+            cols = cp.broadcast_to(cols, rows.shape)
+            src_flat = cp.reshape(src, rows.shape)
+            cp.add.at(x, (rows, cols), src_flat)
+            return x
+
+        raise NotImplementedError("scatter_add configuration not supported on CUDA backend")
 
 
 def masked_fill(x, mask, value):

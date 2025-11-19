@@ -588,15 +588,79 @@ def mean(input, axis=None, keepdims=False):
 
 
 def max(input, axis=None, keepdims=False):
-	backend = input._backend
-	result = backend.max(input.data, axis=axis, keepdims=keepdims)
-	return result
+        backend = input._backend
+        result_data = backend.max(input.data, axis=axis, keepdims=keepdims)
+        result_data = backend.asarray(result_data)
+
+        out = Tensor.__new__(Tensor)
+        out._requires_grad = input._requires_grad
+        out._grad = None
+        out._dtype = input._dtype
+        out._backend = backend
+        out.device = input.device
+        out.active_device = input.active_device
+        out.data = result_data
+
+        if is_grad_enabled() and out._requires_grad:
+                if axis is None:
+                        indices = backend.argmax(input.data)
+                        if hasattr(indices, 'item'):
+                                indices = int(indices.item())
+                        else:
+                                indices = int(indices)
+                else:
+                        indices = backend.argmax(input.data, axis=axis)
+                        indices = backend.expand_dims(indices, axis=axis)
+
+                out._grad_fn = Function(
+                        backward_max_reduce,
+                        [input],
+                        metadata={
+                                'axis': axis,
+                                'keepdims': keepdims,
+                                'max_indices': indices,
+                        },
+                )
+
+        return out
 
 
 def min(input, axis=None, keepdims=False):
-	backend = input._backend
-	result = backend.min(input.data, axis=axis, keepdims=keepdims)
-	return result
+        backend = input._backend
+        result_data = backend.min(input.data, axis=axis, keepdims=keepdims)
+        result_data = backend.asarray(result_data)
+
+        out = Tensor.__new__(Tensor)
+        out._requires_grad = input._requires_grad
+        out._grad = None
+        out._dtype = input._dtype
+        out._backend = backend
+        out.device = input.device
+        out.active_device = input.active_device
+        out.data = result_data
+
+        if is_grad_enabled() and out._requires_grad:
+                if axis is None:
+                        indices = backend.argmin(input.data)
+                        if hasattr(indices, 'item'):
+                                indices = int(indices.item())
+                        else:
+                                indices = int(indices)
+                else:
+                        indices = backend.argmin(input.data, axis=axis)
+                        indices = backend.expand_dims(indices, axis=axis)
+
+                out._grad_fn = Function(
+                        backward_min_reduce,
+                        [input],
+                        metadata={
+                                'axis': axis,
+                                'keepdims': keepdims,
+                                'min_indices': indices,
+                        },
+                )
+
+        return out
 
 
 # ============================================================================
