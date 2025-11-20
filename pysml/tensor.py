@@ -446,14 +446,6 @@ class Tensor:
             self._grad_fn = None
         gc.collect()
 
-    def __del__(self):
-        if hasattr(self, "data") and self.data is not None:
-            del self.data
-        if hasattr(self, "_grad") and self._grad is not None:
-            del self._grad
-        if hasattr(self, "_grad_fn"):
-            self._grad_fn = None
-
     # ------------------------------------------------------------------
     # Python protocol helpers
     # ------------------------------------------------------------------

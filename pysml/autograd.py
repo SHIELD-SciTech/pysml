@@ -8,14 +8,16 @@ class Function:
         __slots__ = ('inputs', 'backward_fn', 'metadata', 'next_functions', '_saved_inputs')
 
         def __init__(self, backward_fn: Callable, inputs: List, metadata: dict = None):
-                # Store weak references to inputs to avoid reference cycles
+                # Keep weak references for graph traversal but retain strong references for backward.
                 self.inputs = [weakref.ref(t) if t is not None else None for t in inputs]
+                self._saved_inputs = [t for t in inputs if t is not None]
                 self.backward_fn = backward_fn
                 self.metadata = metadata or {}
                 self.next_functions = []  # For graph traversal
 
         def apply_backward(self, grad_output):
                 result = self.backward_fn(grad_output, *self.inputs, **self.metadata)
+                # Release saved references after backward to avoid leaks.
                 self._saved_inputs = None
                 return result
 
@@ -537,7 +539,7 @@ def backward_tanh(grad_output, input_ref, **metadata):
         grads = []
         
         input_tensor = input_ref() if input_ref else None
-        
+
         if input_tensor and input_tensor._requires_grad:
                 backend = grad_output._backend
                 grad = type(grad_output).__new__(type(grad_output))
@@ -545,11 +547,17 @@ def backward_tanh(grad_output, input_ref, **metadata):
                 grad._dtype = grad_output._dtype
                 grad.device = grad_output.device
                 grad.active_device = grad_output.active_device
-                
-                # tanh(x)
-                tanh_x = backend.tanh(input_tensor.data)
+
+                # Prefer using saved output to avoid recomputation.
+                tanh_output = metadata.get('output')
+                if tanh_output is None:
+                        # Fallback to recomputation if metadata missing.
+                        grad_input = backend.tanh(input_tensor.data)
+                else:
+                        grad_input = tanh_output
+
                 # 1 - tanh^2(x)
-                tanh_squared = backend.multiply(tanh_x, tanh_x)
+                tanh_squared = backend.multiply(grad_input, grad_input)
                 grad_tanh = backend.subtract(1.0, tanh_squared)
                 # grad_output * (1 - tanh^2(x))
                 grad.data = backend.multiply(grad_output.data, grad_tanh)
@@ -723,7 +731,7 @@ def backward_sigmoid(grad_output, input_ref, **metadata):
         grads = []
         
         input_tensor = input_ref() if input_ref else None
-        
+
         if input_tensor and input_tensor._requires_grad:
                 backend = grad_output._backend
                 grad = type(grad_output).__new__(type(grad_output))
@@ -731,18 +739,20 @@ def backward_sigmoid(grad_output, input_ref, **metadata):
                 grad._dtype = grad_output._dtype
                 grad.device = grad_output.device
                 grad.active_device = grad_output.active_device
-                
-                # Compute sigmoid(x)
-                sigmoid_x = backend.reciprocal(
-                        backend.add(1.0, backend.exp(backend.negative(input_tensor.data)))
-                )
-                
+
+                sigmoid_x = metadata.get('output')
+                if sigmoid_x is None:
+                        # Fallback to recomputation if forward output is unavailable.
+                        sigmoid_x = backend.reciprocal(
+                                backend.add(1.0, backend.exp(backend.negative(input_tensor.data)))
+                        )
+
                 # sigmoid(x) * (1 - sigmoid(x))
                 grad_sigmoid = backend.multiply(
                         sigmoid_x,
                         backend.subtract(1.0, sigmoid_x)
                 )
-                
+
                 # grad_output * sigmoid'(x)
                 grad.data = backend.multiply(grad_output.data, grad_sigmoid)
                 grad._requires_grad = False
@@ -874,32 +884,33 @@ def backward_softmax(grad_output, input_ref, **metadata):
         grads = []
         
         input_tensor = input_ref() if input_ref else None
-        
+
         if input_tensor and input_tensor._requires_grad:
                 backend = grad_output._backend
                 axis = metadata.get('axis', -1)
-                
+                softmax_output = metadata.get('output')
+
                 grad = type(grad_output).__new__(type(grad_output))
                 grad._backend = backend
                 grad._dtype = grad_output._dtype
                 grad.device = grad_output.device
                 grad.active_device = grad_output.active_device
-                
-                # Recompute softmax(x)
-                # softmax(x) = exp(x - max(x)) / sum(exp(x - max(x)))
-                x_max = backend.max(input_tensor.data, axis=axis, keepdims=True)
-                x_shifted = backend.subtract(input_tensor.data, x_max)
-                exp_x = backend.exp(x_shifted)
-                sum_exp = backend.sum(exp_x, axis=axis, keepdims=True)
-                softmax_output = backend.divide(exp_x, sum_exp)
-                
+
+                if softmax_output is None:
+                        # Fallback to recomputation if the forward output is missing.
+                        x_max = backend.max(input_tensor.data, axis=axis, keepdims=True)
+                        x_shifted = backend.subtract(input_tensor.data, x_max)
+                        exp_x = backend.exp(x_shifted)
+                        sum_exp = backend.sum(exp_x, axis=axis, keepdims=True)
+                        softmax_output = backend.divide(exp_x, sum_exp)
+
                 # Compute sum of (softmax * grad_output) along axis
                 sum_term = backend.sum(
                         backend.multiply(softmax_output, grad_output.data),
                         axis=axis,
                         keepdims=True
                 )
-                
+
                 # Gradient: softmax * (grad_output - sum_term)
                 grad.data = backend.multiply(
                         softmax_output,
@@ -933,23 +944,30 @@ def backward_layer_norm(grad_output, input_ref, **metadata):
                 normalized_shape = metadata.get('normalized_shape')
                 eps = metadata.get('eps', 1e-5)
                 gamma = metadata.get('gamma', None)  # Scale parameter
-                
+                saved_mean = metadata.get('mean')
+                inv_std = metadata.get('inv_std')
+
                 grad = type(grad_output).__new__(type(grad_output))
                 grad._backend = backend
                 grad._dtype = grad_output._dtype
                 grad.device = grad_output.device
                 grad.active_device = grad_output.active_device
-                
+
                 # Determine axes to normalize over
                 ndim = len(input_tensor.shape)
                 axes = tuple(range(ndim - len(normalized_shape), ndim))
-                
-                # Recompute forward pass statistics
-                mean = backend.mean(input_tensor.data, axis=axes, keepdims=True)
-                centered = backend.subtract(input_tensor.data, mean)
-                var = backend.mean(backend.multiply(centered, centered), axis=axes, keepdims=True)
-                std = backend.sqrt(backend.add(var, eps))
-                normalized = backend.divide(centered, std)
+
+                if saved_mean is None or inv_std is None:
+                        # Fallback to recomputation if stats are unavailable
+                        mean = backend.mean(input_tensor.data, axis=axes, keepdims=True)
+                        centered = backend.subtract(input_tensor.data, mean)
+                        var = backend.mean(backend.multiply(centered, centered), axis=axes, keepdims=True)
+                        inv_std = backend.reciprocal(backend.sqrt(backend.add(var, eps)))
+                else:
+                        mean = saved_mean
+                        centered = backend.subtract(input_tensor.data, mean)
+
+                normalized = backend.multiply(centered, inv_std)
                 
                 # Gradient computation
                 if gamma is not None:
@@ -977,6 +995,7 @@ def backward_layer_norm(grad_output, input_ref, **metadata):
                         grad_input,
                         backend.multiply(normalized, sum_grad_normalized)
                 )
+                std = backend.reciprocal(inv_std)
                 grad.data = backend.divide(grad_input, backend.multiply(N, std))
                 
                 grad._requires_grad = False
@@ -1005,22 +1024,26 @@ def backward_rms_norm(grad_output, input_ref, **metadata):
                 normalized_shape = metadata.get('normalized_shape')
                 eps = metadata.get('eps', 1e-6)
                 gamma = metadata.get('gamma', None)
-                
+                inv_rms = metadata.get('inv_rms')
+
                 grad = type(grad_output).__new__(type(grad_output))
                 grad._backend = backend
                 grad._dtype = grad_output._dtype
                 grad.device = grad_output.device
                 grad.active_device = grad_output.active_device
-                
+
                 # Determine axes
                 ndim = len(input_tensor.shape)
                 axes = tuple(range(ndim - len(normalized_shape), ndim))
-                
-                # Recompute RMS
-                x_squared = backend.multiply(input_tensor.data, input_tensor.data)
-                mean_squared = backend.mean(x_squared, axis=axes, keepdims=True)
-                rms = backend.sqrt(backend.add(mean_squared, eps))
-                normalized = backend.divide(input_tensor.data, rms)
+
+                if inv_rms is None:
+                        x_squared = backend.multiply(input_tensor.data, input_tensor.data)
+                        mean_squared = backend.mean(x_squared, axis=axes, keepdims=True)
+                        rms = backend.sqrt(backend.add(mean_squared, eps))
+                        inv_rms = backend.reciprocal(rms)
+                else:
+                        rms = backend.reciprocal(inv_rms)
+                normalized = backend.multiply(input_tensor.data, inv_rms)
                 
                 # Gradient
                 if gamma is not None:
@@ -1041,7 +1064,7 @@ def backward_rms_norm(grad_output, input_ref, **metadata):
                         keepdims=True
                 )
                 sum_term = backend.divide(sum_term, N)
-                
+
                 term1 = backend.divide(grad_normalized, rms)
                 term2 = backend.multiply(
                         backend.divide(input_tensor.data, backend.multiply(rms, rms)),
