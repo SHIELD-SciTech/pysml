@@ -1,3 +1,4 @@
+import builtins
 import weakref
 from typing import Callable, List, Tuple, Optional
 
@@ -1355,30 +1356,48 @@ def backward_concatenate(grad_output, *input_refs, **metadata):
 def backward_split(grad_output, input_ref, **metadata):
         """
         Backward for split/chunk
-        
+
         Concatenate gradients from all output chunks
         """
         grads = []
-        
+
         input_tensor = input_ref() if input_ref else None
-        
+
         if input_tensor and input_tensor._requires_grad:
-                backend = grad_output._backend
+                backend = input_tensor._backend
                 axis = metadata.get('axis', 0)
-                
-                grad = type(grad_output).__new__(type(grad_output))
+                sizes = metadata.get('sizes', [])
+                index = metadata.get('index', 0)
+
+                grad = type(input_tensor).__new__(type(input_tensor))
                 grad._backend = backend
-                grad._dtype = grad_output._dtype
-                grad.device = grad_output.device
-                grad.active_device = grad_output.active_device
-                
-                # grad_output should be a list/tuple of gradients
-                # Concatenate them along the split axis
+                grad._dtype = input_tensor._dtype
+                grad.device = input_tensor.device
+                grad.active_device = input_tensor.active_device
+
                 if isinstance(grad_output, (list, tuple)):
-                        grad.data = backend.concatenate([g.data for g in grad_output], axis=axis)
+                        # Some autograd paths may provide a full list of grads. Treat None as zeros.
+                        chunk_grads = []
+                        for idx, g in enumerate(grad_output):
+                                start = builtins.sum(sizes[:idx]) if sizes else 0
+                                end = start + (sizes[idx] if sizes else g.data.shape[axis])
+                                if g is None:
+                                        slice_shape = list(input_tensor.shape)
+                                        slice_shape[axis] = end - start
+                                        chunk_grads.append(backend.zeros(slice_shape, dtype=grad._dtype.precission))
+                                else:
+                                        chunk_grads.append(g.data)
+                        grad.data = backend.concatenate(chunk_grads, axis=axis)
                 else:
-                        grad.data = grad_output.data
-                
+                        grad_data = backend.zeros_like(input_tensor.data)
+                        if grad_output is not None:
+                                start = builtins.sum(sizes[:index]) if sizes else 0
+                                end = start + (sizes[index] if sizes else grad_output.data.shape[axis])
+                                slices = [slice(None)] * grad_data.ndim
+                                slices[axis] = slice(start, end)
+                                grad_data[tuple(slices)] = grad_output.data
+                        grad.data = grad_data
+
                 grad._requires_grad = False
                 grad._grad = None
                 grad._grad_fn = None

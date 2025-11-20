@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import gc
 import weakref
+from functools import lru_cache
 from collections.abc import Sequence
 from typing import Optional, Union, Callable, Any
 
@@ -550,26 +551,31 @@ class Tensor:
             device = "cpu"
 
         if isinstance(device, str):
-            device = device.lower()
-            if device.startswith("xpu"):
-                from .xpu import backend as xpu_backend
-
-                index = _parse_device_index(device)
-                active = "xpu" if index is None else f"xpu:{index}"
-                return xpu_backend, index, active
-            if device.startswith("cuda"):
-                from .cuda import backend as cuda_backend
-
-                index = _parse_device_index(device)
-                active = "cuda" if index is None else f"cuda:{index}"
-                return cuda_backend, index, active
-            if device == "cpu":
-                from .cpu import backend as cpu_backend
-
-                return cpu_backend, None, "cpu"
-            raise ValueError(f"Unsupported device specification: {device!r}")
+            return _cached_resolve_device(device)
 
         raise TypeError(f"Expected str, Tensor or None for device, got {type(device)!r}")
+
+
+@lru_cache(maxsize=16)
+def _cached_resolve_device(device: str):
+    device = device.lower()
+    if device.startswith("xpu"):
+        from .xpu import backend as xpu_backend
+
+        index = _parse_device_index(device)
+        active = "xpu" if index is None else f"xpu:{index}"
+        return xpu_backend, index, active
+    if device.startswith("cuda"):
+        from .cuda import backend as cuda_backend
+
+        index = _parse_device_index(device)
+        active = "cuda" if index is None else f"cuda:{index}"
+        return cuda_backend, index, active
+    if device == "cpu":
+        from .cpu import backend as cpu_backend
+
+        return cpu_backend, None, "cpu"
+    raise ValueError(f"Unsupported device specification: {device!r}")
 
 
 def _parse_device_index(device: str) -> Optional[int]:
