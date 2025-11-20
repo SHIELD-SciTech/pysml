@@ -1,11 +1,17 @@
+import warnings
+
 try:
-	import dpnp as ng
-	import dpctl
-	AVAILABLE = True
-except:
-	AVAILABLE = False
-	import numpy as ng
-	dpctl = None
+        import dpnp as ng
+        import dpctl
+        AVAILABLE = True
+except ImportError:
+        warnings.warn(
+                "Intel XPU backend (dpnp/dpctl) not found. Falling back to CPU (NumPy). Performance will be significantly degraded.",
+                RuntimeWarning
+        )
+        AVAILABLE = False
+        import numpy as ng
+        dpctl = None
 
 
 
