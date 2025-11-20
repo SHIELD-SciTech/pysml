@@ -1,7 +1,10 @@
 import json
 import pickle
+import warnings
 from importlib import import_module, util
 from typing import Any, Dict, Optional
+
+import numpy as np
 
 
 def _load_parallel_strategy():
@@ -162,6 +165,33 @@ def _map_location(obj, device):
     return obj
 
 
+def _to_numpy(value):
+    """Best-effort conversion of tensors/arrays to NumPy arrays."""
+
+    if hasattr(value, "numpy"):
+        try:
+            return value.numpy()
+        except Exception:
+            pass
+
+    if hasattr(value, "data"):
+        backend = getattr(value, "_backend", None)
+        if backend is not None and hasattr(backend, "asnumpy"):
+            try:
+                return backend.asnumpy(value.data)
+            except Exception:
+                pass
+        try:
+            return np.asarray(value.data)
+        except Exception:
+            pass
+
+    try:
+        return np.asarray(value)
+    except Exception:
+        return None
+
+
 torch_save = save
 torch_load = load
 
@@ -175,19 +205,52 @@ def export_onnx(model, dummy_input, filepath, opset_version=12, **kwargs):
 
 
 def save_safetensors(model, filepath):
-    raise NotImplementedError(
-        "Safetensors format is not yet implemented. "
-        "This feature is planned for PySML v0.5.0. "
-        "For now, please use standard save/load functions."
-    )
+    """Save ``model`` parameters to ``filepath`` in safetensors format if available.
+
+    Falls back to pickle-based :func:`save_state_dict` when the optional
+    :mod:`safetensors` dependency is missing. Parameters that cannot be
+    converted to NumPy arrays are skipped with a warning.
+    """
+
+    state_dict = model.state_dict() if hasattr(model, "state_dict") else model
+
+    try:
+        from safetensors.numpy import save_file
+    except ImportError:
+        warnings.warn(
+            "safetensors not installed; falling back to pickle-based save_state_dict",
+            RuntimeWarning,
+        )
+        return save_state_dict(model, filepath)
+
+    tensors: Dict[str, np.ndarray] = {}
+    for name, value in state_dict.items():
+        array = _to_numpy(value)
+        if array is None:
+            warnings.warn(
+                f"Skipping parameter '{name}' because it cannot be converted to a NumPy array.",
+                RuntimeWarning,
+            )
+            continue
+        tensors[name] = np.asarray(array)
+
+    save_file(tensors, filepath)
 
 
 def load_safetensors(filepath):
-    raise NotImplementedError(
-        "Safetensors format is not yet implemented. "
-        "This feature is planned for PySML v0.5.0. "
-        "For now, please use standard load function."
-    )
+    """Load tensors from a safetensors file into PySML ``Tensor`` objects."""
+
+    try:
+        from safetensors.numpy import load_file
+    except ImportError as exc:
+        raise RuntimeError(
+            "Install the 'safetensors' package to load safetensors files."
+        ) from exc
+
+    arrays = load_file(filepath)
+    from .tensor import Tensor
+
+    return {name: Tensor(array) for name, array in arrays.items()}
 
 
 __all__ = [

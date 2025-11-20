@@ -18,6 +18,7 @@ from typing import Optional, Union, Callable, Any
 
 
 from .dtype import bf16
+from .memory_pool import get_buffer_pool
 
 DeviceLike = Union[str, "Tensor", None]
 ShapeLike = Union[int, Sequence[int]]
@@ -32,6 +33,7 @@ class Tensor:
         instance._grad_fn = None
         instance._grad = None
         instance._requires_grad = False
+        instance._version = 0
         return instance
 
     __slots__ = (
@@ -43,6 +45,7 @@ class Tensor:
         "_backend",
         "device",
         "active_device",
+        "_version",
         "_post_backward_hooks",
         "__weakref__",
     )
@@ -57,13 +60,21 @@ class Tensor:
         self._requires_grad = requires_grad
         self._grad = None
         self._grad_fn = None
+        self._version = 0
 
         self._dtype = dtype or DEFAULT_DTYPE
         backend, device_index, device_string = self._resolve_backend(device)
         self._backend = backend
         self.device = device_index
         self.active_device = device_string
-        self.data = backend.convert(data, self._dtype, device=device_index)
+
+        converted = backend.convert(data, self._dtype, device=device_index)
+        buffer = _request_buffer(converted.shape, self._dtype, backend, device_index)
+        if buffer is not None:
+            backend.copyto(buffer, converted)
+            converted = buffer
+
+        self.data = converted
         self._post_backward_hooks: list[Callable[["Tensor"], None]] = []
 
     # ------------------------------------------------------------------
@@ -232,9 +243,6 @@ class Tensor:
 
                 input_tensor._run_post_backward_hooks()
 
-        if not retain_graph:
-            self._grad_fn = None
-
     # ------------------------------------------------------------------
     # Device and dtype management
     # ------------------------------------------------------------------
@@ -323,8 +331,6 @@ class Tensor:
     # View & manipulation helpers
     # ------------------------------------------------------------------
     def reshape(self, *shape: ShapeLike) -> "Tensor":
-        from . import engine
-
         if len(shape) == 1 and isinstance(shape[0], (tuple, list, Sequence)):
             target = tuple(shape[0])
         else:
@@ -335,8 +341,6 @@ class Tensor:
         return self.reshape(*shape)
 
     def permute(self, *dims: int) -> "Tensor":
-        from . import engine
-
         if len(dims) == 1 and isinstance(dims[0], (tuple, list, Sequence)):
             dims = tuple(dims[0])
         else:
@@ -350,19 +354,12 @@ class Tensor:
 
     def T(self) -> "Tensor":  # noqa: D401
         """Return the transposed view of the tensor."""
-
-        from . import engine
-
         return engine.transpose(self)
 
     def unsqueeze(self, dim: int) -> "Tensor":
-        from . import engine
-
         return engine.unsqueeze(self, dim)
 
     def squeeze(self, dim: Optional[int] = None) -> "Tensor":
-        from . import engine
-
         if dim is None:
             return engine.squeeze(self)
         return engine.squeeze(self, axis=dim)
@@ -390,23 +387,15 @@ class Tensor:
     # Reductions
     # ------------------------------------------------------------------
     def sum(self, axis=None, keepdims: bool = False):
-        from . import engine
-
         return engine.sum_with_grad(self, axis=axis, keepdims=keepdims)
 
     def mean(self, axis=None, keepdims: bool = False):
-        from . import engine
-
         return engine.mean_with_grad(self, axis=axis, keepdims=keepdims)
 
     def max(self, axis=None, keepdims: bool = False):
-        from . import engine
-
         return engine.max(self, axis=axis, keepdims=keepdims)
 
     def min(self, axis=None, keepdims: bool = False):
-        from . import engine
-
         return engine.min(self, axis=axis, keepdims=keepdims)
 
     # ------------------------------------------------------------------
@@ -433,22 +422,47 @@ class Tensor:
         cloned._grad_fn = None
         cloned.device = self.device
         cloned.active_device = self.active_device
-        cloned.data = self._backend.copy(self.data)
+        cloned._version = getattr(self, "_version", 0)
+
+        buffer = _request_buffer(self.data.shape, self._dtype, self._backend, self.device)
+        if buffer is not None:
+            self._backend.copyto(buffer, self.data)
+            cloned.data = buffer
+        else:
+            cloned.data = self._backend.copy(self.data)
         return cloned
 
     # ------------------------------------------------------------------
     # Memory helpers
     # ------------------------------------------------------------------
     def free(self) -> None:
-        if self.data is not None:
-            del self.data
-            self.data = None
+        if getattr(self, "data", None) is not None:
+            pool = get_buffer_pool()
+            if pool is not None:
+                try:
+                    pool.return_buffer(
+                        self.data, self.shape, self._dtype, self._backend, self.device
+                    )
+                except Exception:
+                    pass
+            try:
+                del self.data
+                self.data = None
+            except Exception:
+                self.data = None
         if self._grad is not None:
             del self._grad
             self._grad = None
         if self._grad_fn is not None:
             self._grad_fn = None
         gc.collect()
+
+    def __del__(self):
+        try:
+            self.free()
+        except Exception:
+            # Avoid exceptions during interpreter shutdown
+            pass
 
     # ------------------------------------------------------------------
     # Python protocol helpers
@@ -468,44 +482,28 @@ class Tensor:
     # Arithmetic operator overloads
     # ------------------------------------------------------------------
     def __add__(self, other):
-        from . import engine
-
         return engine.add(self, other)
 
     def __radd__(self, other):
-        from . import engine
-
         return engine.add(self, other)
 
     def __sub__(self, other):
-        from . import engine
-
         return engine.subtract(self, other)
 
     def __rsub__(self, other):
-        from . import engine
-
         result = engine.subtract(self, other)
         return engine.negative(result)
 
     def __mul__(self, other):
-        from . import engine
-
         return engine.multiply(self, other)
 
     def __rmul__(self, other):
-        from . import engine
-
         return engine.multiply(self, other)
 
     def __truediv__(self, other):
-        from . import engine
-
         return engine.divide(self, other)
 
     def __rtruediv__(self, other):
-        from . import engine
-
         if not isinstance(other, Tensor):
             other_tensor = Tensor([other], dtype=self._dtype)
             other_tensor.to(self.active_device)
@@ -513,18 +511,12 @@ class Tensor:
         return engine.divide(other, self)
 
     def __pow__(self, other):
-        from . import engine
-
         return engine.power(self, other)
 
     def __neg__(self):
-        from . import engine
-
         return engine.negative(self)
 
     def __matmul__(self, other):
-        from . import engine
-
         return engine.matmul(self, other)
 
     # ------------------------------------------------------------------
@@ -539,8 +531,18 @@ class Tensor:
         new_tensor._grad_fn = None
         new_tensor.device = self.device
         new_tensor.active_device = self.active_device
+        new_tensor._version = getattr(self, "_version", 0)
+
+        buffer = _request_buffer(getattr(data, "shape", None), new_tensor._dtype, new_tensor._backend, new_tensor.device)
+        if buffer is not None:
+            new_tensor._backend.copyto(buffer, data)
+            data = buffer
+
         new_tensor.data = data
         return new_tensor
+
+    def _bump_version(self) -> None:
+        self._version = getattr(self, "_version", 0) + 1
 
     @staticmethod
     def _resolve_backend(device: DeviceLike):
@@ -560,13 +562,23 @@ class Tensor:
 def _cached_resolve_device(device: str):
     device = device.lower()
     if device.startswith("xpu"):
-        from .xpu import backend as xpu_backend
+        try:
+            from .xpu import backend as xpu_backend
+        except ImportError as exc:
+            raise RuntimeError(
+                "XPU backend requested but dpnp/dpctl are not installed."
+            ) from exc
 
         index = _parse_device_index(device)
         active = "xpu" if index is None else f"xpu:{index}"
         return xpu_backend, index, active
     if device.startswith("cuda"):
-        from .cuda import backend as cuda_backend
+        try:
+            from .cuda import backend as cuda_backend
+        except ImportError as exc:
+            raise RuntimeError(
+                "CUDA backend requested but required dependencies are missing."
+            ) from exc
 
         index = _parse_device_index(device)
         active = "cuda" if index is None else f"cuda:{index}"
@@ -587,7 +599,32 @@ def _parse_device_index(device: str) -> Optional[int]:
     return int(index_str)
 
 
+def _request_buffer(shape, dtype, backend, device):
+    if shape is None or backend is None:
+        return None
+    try:
+        return get_buffer_pool().get_buffer(shape, dtype, backend, device)
+    except Exception:
+        return None
+
+
+def _return_buffer(buffer, dtype, backend, device):
+    if buffer is None or dtype is None or backend is None:
+        return
+    shape = getattr(buffer, "shape", None)
+    if shape is None:
+        return
+    try:
+        get_buffer_pool().return_buffer(buffer, shape, dtype, backend, device)
+    except Exception:
+        return
+
+
 from .cpu import backend as cpu_backend
 
 DEFAULT_BACKEND = cpu_backend
 DEFAULT_DTYPE = bf16()
+
+# Import engine globally to avoid repeated local imports while sidestepping
+# initialization cycles.
+from . import engine
