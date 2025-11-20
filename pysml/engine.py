@@ -44,21 +44,21 @@ def _backend(*tensors):
 ENSURE_BACKEND = False
 
 
-def _get_out_buffer(shape, dtype, backend, device):
+_BUFFER_POOL = get_buffer_pool()
+
+
+def _maybe_allocate_buffer(shape, dtype, backend, device):
         if shape is None:
                 return None
-        pool = get_buffer_pool()
-        if pool is None:
-                return None
         try:
-                return pool.get_buffer(shape, dtype, backend, device)
+                return _BUFFER_POOL.get_buffer(shape, dtype, backend, device)
         except Exception:
                 return None
 
 
 def _wrap_result(template, backend, requires_grad, data):
         pooled = data
-        buffer = _get_out_buffer(getattr(data, "shape", None), template._dtype, backend, template.device)
+        buffer = _maybe_allocate_buffer(getattr(data, "shape", None), template._dtype, backend, template.device)
         if buffer is not None and buffer is not data:
                 backend.copyto(buffer, data)
                 pooled = buffer
@@ -111,7 +111,7 @@ def add(input, other, alpha=1, out=None):
                 other_data = backend.multiply(other_data, alpha)
 
         if out is None:
-                buffer = _get_out_buffer(input.data.shape, input._dtype, backend, input.device)
+                buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
                 if buffer is not None:
                         result_data = backend.add(input.data, other_data, out=buffer)
                 else:
@@ -134,7 +134,7 @@ def subtract(input, other, out=None):
         other_data = other.data if hasattr(other, 'data') else other
 
         if out is None:
-                buffer = _get_out_buffer(input.data.shape, input._dtype, backend, input.device)
+                buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
                 if buffer is not None:
                         result_data = backend.subtract(input.data, other_data, out=buffer)
                 else:
@@ -159,7 +159,7 @@ def multiply(input, other, out=None):
         is_scalar = not hasattr(other, 'data')
 
         if out is None:
-                buffer = _get_out_buffer(input.data.shape, input._dtype, backend, input.device)
+                buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
                 if buffer is not None:
                         result_data = backend.multiply(input.data, other_data, out=buffer)
                 else:
@@ -188,7 +188,7 @@ def divide(input, other, out=None):
         is_scalar = not hasattr(other, 'data')
 
         if out is None:
-                buffer = _get_out_buffer(input.data.shape, input._dtype, backend, input.device)
+                buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
                 if buffer is not None:
                         result_data = backend.divide(input.data, other_data, out=buffer)
                 else:
@@ -217,7 +217,7 @@ def power(input, exponent, out=None):
         exponent_value = float(exponent_data) if not hasattr(exponent_data, '__len__') else exponent_data
 
         if out is None:
-                buffer = _get_out_buffer(input.data.shape, input._dtype, backend, input.device)
+                buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
                 if buffer is not None:
                         result_data = backend.power(input.data, exponent_data, out=buffer)
                 else:
@@ -237,7 +237,7 @@ def negative(input, out=None):
         backend = input._backend
 
         if out is None:
-                buffer = _get_out_buffer(input.data.shape, input._dtype, backend, input.device)
+                buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
                 if buffer is not None:
                         result_data = backend.negative(input.data, out=buffer)
                 else:
@@ -263,7 +263,7 @@ def matmul(input, other, out=None):
                 backend = _backend(input, other)
 
         if out is None:
-                buffer = _get_out_buffer((input.data.shape[0], other.data.shape[1]), input._dtype, backend, input.device)
+                buffer = _maybe_allocate_buffer((input.data.shape[0], other.data.shape[1]), input._dtype, backend, input.device)
                 if buffer is not None:
                         result_data = backend.matmul(input.data, other.data, out=buffer)
                 else:
@@ -291,7 +291,7 @@ def relu(input, out=None):
         backend = input._backend
 
         if out is None:
-                buffer = _get_out_buffer(input.data.shape, input._dtype, backend, input.device)
+                buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
                 if buffer is not None:
                         result_data = backend.maximum(input.data, 0, out=buffer)
                 else:
@@ -311,7 +311,7 @@ def exp(input, out=None):
         backend = input._backend
 
         if out is None:
-                buffer = _get_out_buffer(input.data.shape, input._dtype, backend, input.device)
+                buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
                 if buffer is not None:
                         result_data = backend.exp(input.data, out=buffer)
                 else:
@@ -331,7 +331,7 @@ def log(input, out=None):
         backend = input._backend
 
         if out is None:
-                buffer = _get_out_buffer(input.data.shape, input._dtype, backend, input.device)
+                buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
                 if buffer is not None:
                         result_data = backend.log(input.data, out=buffer)
                 else:
@@ -351,7 +351,7 @@ def tanh(input, out=None):
         backend = input._backend
 
         if out is None:
-                buffer = _get_out_buffer(input.data.shape, input._dtype, backend, input.device)
+                buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
                 if buffer is not None:
                         result_data = backend.tanh(input.data, out=buffer)
                 else:
@@ -373,7 +373,7 @@ def sigmoid(input, out=None):
         if out is None:
                 # sigmoid(x) = 1 / (1 + exp(-x))
                 temp = backend.add(1.0, backend.exp(backend.negative(input.data)))
-                buffer = _get_out_buffer(input.data.shape, input._dtype, backend, input.device)
+                buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
                 if buffer is not None:
                         result_data = backend.reciprocal(temp, out=buffer)
                 else:
@@ -396,7 +396,7 @@ def sqrt(input, out=None):
         backend = input._backend
 
         if out is None:
-                buffer = _get_out_buffer(input.data.shape, input._dtype, backend, input.device)
+                buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
                 if buffer is not None:
                         result_data = backend.sqrt(input.data, out=buffer)
                 else:

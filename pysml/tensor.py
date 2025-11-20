@@ -437,18 +437,10 @@ class Tensor:
     # ------------------------------------------------------------------
     def free(self) -> None:
         if getattr(self, "data", None) is not None:
-            pool = get_buffer_pool()
-            if pool is not None:
-                try:
-                    pool.return_buffer(
-                        self.data, self.shape, self._dtype, self._backend, self.device
-                    )
-                except Exception:
-                    pass
             try:
+                _return_buffer(self.data, self._dtype, self._backend, self.device)
+            finally:
                 del self.data
-                self.data = None
-            except Exception:
                 self.data = None
         if self._grad is not None:
             del self._grad
