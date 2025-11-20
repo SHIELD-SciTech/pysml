@@ -331,8 +331,6 @@ class Tensor:
     # View & manipulation helpers
     # ------------------------------------------------------------------
     def reshape(self, *shape: ShapeLike) -> "Tensor":
-        from . import engine
-
         if len(shape) == 1 and isinstance(shape[0], (tuple, list, Sequence)):
             target = tuple(shape[0])
         else:
@@ -343,8 +341,6 @@ class Tensor:
         return self.reshape(*shape)
 
     def permute(self, *dims: int) -> "Tensor":
-        from . import engine
-
         if len(dims) == 1 and isinstance(dims[0], (tuple, list, Sequence)):
             dims = tuple(dims[0])
         else:
@@ -358,19 +354,12 @@ class Tensor:
 
     def T(self) -> "Tensor":  # noqa: D401
         """Return the transposed view of the tensor."""
-
-        from . import engine
-
         return engine.transpose(self)
 
     def unsqueeze(self, dim: int) -> "Tensor":
-        from . import engine
-
         return engine.unsqueeze(self, dim)
 
     def squeeze(self, dim: Optional[int] = None) -> "Tensor":
-        from . import engine
-
         if dim is None:
             return engine.squeeze(self)
         return engine.squeeze(self, axis=dim)
@@ -398,23 +387,15 @@ class Tensor:
     # Reductions
     # ------------------------------------------------------------------
     def sum(self, axis=None, keepdims: bool = False):
-        from . import engine
-
         return engine.sum_with_grad(self, axis=axis, keepdims=keepdims)
 
     def mean(self, axis=None, keepdims: bool = False):
-        from . import engine
-
         return engine.mean_with_grad(self, axis=axis, keepdims=keepdims)
 
     def max(self, axis=None, keepdims: bool = False):
-        from . import engine
-
         return engine.max(self, axis=axis, keepdims=keepdims)
 
     def min(self, axis=None, keepdims: bool = False):
-        from . import engine
-
         return engine.min(self, axis=axis, keepdims=keepdims)
 
     # ------------------------------------------------------------------
@@ -493,44 +474,28 @@ class Tensor:
     # Arithmetic operator overloads
     # ------------------------------------------------------------------
     def __add__(self, other):
-        from . import engine
-
         return engine.add(self, other)
 
     def __radd__(self, other):
-        from . import engine
-
         return engine.add(self, other)
 
     def __sub__(self, other):
-        from . import engine
-
         return engine.subtract(self, other)
 
     def __rsub__(self, other):
-        from . import engine
-
         result = engine.subtract(self, other)
         return engine.negative(result)
 
     def __mul__(self, other):
-        from . import engine
-
         return engine.multiply(self, other)
 
     def __rmul__(self, other):
-        from . import engine
-
         return engine.multiply(self, other)
 
     def __truediv__(self, other):
-        from . import engine
-
         return engine.divide(self, other)
 
     def __rtruediv__(self, other):
-        from . import engine
-
         if not isinstance(other, Tensor):
             other_tensor = Tensor([other], dtype=self._dtype)
             other_tensor.to(self.active_device)
@@ -538,18 +503,12 @@ class Tensor:
         return engine.divide(other, self)
 
     def __pow__(self, other):
-        from . import engine
-
         return engine.power(self, other)
 
     def __neg__(self):
-        from . import engine
-
         return engine.negative(self)
 
     def __matmul__(self, other):
-        from . import engine
-
         return engine.matmul(self, other)
 
     # ------------------------------------------------------------------
@@ -595,13 +554,23 @@ class Tensor:
 def _cached_resolve_device(device: str):
     device = device.lower()
     if device.startswith("xpu"):
-        from .xpu import backend as xpu_backend
+        try:
+            from .xpu import backend as xpu_backend
+        except ImportError:
+            raise RuntimeError(
+                "XPU backend requested but not found. Please install 'dpnp' and 'dpctl'."
+            )
 
         index = _parse_device_index(device)
         active = "xpu" if index is None else f"xpu:{index}"
         return xpu_backend, index, active
     if device.startswith("cuda"):
-        from .cuda import backend as cuda_backend
+        try:
+            from .cuda import backend as cuda_backend
+        except ImportError:
+            raise RuntimeError(
+                "CUDA backend requested but not found. Please install 'cupy'."
+            )
 
         index = _parse_device_index(device)
         active = "cuda" if index is None else f"cuda:{index}"
@@ -647,3 +616,7 @@ from .cpu import backend as cpu_backend
 
 DEFAULT_BACKEND = cpu_backend
 DEFAULT_DTYPE = bf16()
+
+# Import engine globally to avoid repeated local imports while sidestepping
+# initialization cycles.
+from . import engine

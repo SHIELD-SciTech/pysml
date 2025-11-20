@@ -1,7 +1,10 @@
 import json
 import pickle
+import warnings
 from importlib import import_module, util
 from typing import Any, Dict, Optional
+
+import numpy as np
 
 
 def _load_parallel_strategy():
@@ -162,6 +165,33 @@ def _map_location(obj, device):
     return obj
 
 
+def _to_numpy(value):
+    """Best-effort conversion of tensors/arrays to NumPy arrays."""
+
+    if hasattr(value, "numpy"):
+        try:
+            return value.numpy()
+        except Exception:
+            pass
+
+    if hasattr(value, "data"):
+        backend = getattr(value, "_backend", None)
+        if backend is not None and hasattr(backend, "asnumpy"):
+            try:
+                return backend.asnumpy(value.data)
+            except Exception:
+                pass
+        try:
+            return np.asarray(value.data)
+        except Exception:
+            pass
+
+    try:
+        return np.asarray(value)
+    except Exception:
+        return None
+
+
 torch_save = save
 torch_load = load
 
@@ -175,19 +205,19 @@ def export_onnx(model, dummy_input, filepath, opset_version=12, **kwargs):
 
 
 def save_safetensors(model, filepath):
-    raise NotImplementedError(
-        "Safetensors format is not yet implemented. "
-        "This feature is planned for PySML v0.5.0. "
-        "For now, please use standard save/load functions."
+    warnings.warn(
+        "Safetensors support is currently experimental/missing. "
+        "Falling back to standard pickle checkpointing."
     )
+    return save_state_dict(model, filepath)
 
 
 def load_safetensors(filepath):
-    raise NotImplementedError(
-        "Safetensors format is not yet implemented. "
-        "This feature is planned for PySML v0.5.0. "
-        "For now, please use standard load function."
+    warnings.warn(
+        "Safetensors support is currently experimental/missing. "
+        "Falling back to standard pickle loading."
     )
+    return load(filepath)
 
 
 __all__ = [
