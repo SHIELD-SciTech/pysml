@@ -22,16 +22,16 @@ else:
 
 precission_map = {"fp32": "float32", "fp16": "float16", "bf16": "float16"}
 def convert(data, dtype, device=None):
-	if hasattr(dtype, 'precission'):
-		pres = precission_map[dtype.precission]
-	else:
-		pres = dtype
-	if device is not None:
-		if "cuda" in str(device):
-			device_id = int(str(device).split(":")[1])
-			with cp.cuda.Device(device_id):
-				return cp.array(data, dtype=pres)
-		return cp.array(data, dtype=pres)
+        if hasattr(dtype, 'precission'):
+                pres = precission_map[dtype.precission]
+        else:
+                pres = dtype
+        if device is not None:
+                if AVAILABLE and "cuda" in str(device):
+                        device_id = int(str(device).split(":")[1])
+                        with cp.cuda.Device(device_id):
+                                return cp.array(data, dtype=pres)
+                return cp.array(data, dtype=pres)
 	else:
 		return cp.array(data, dtype=pres)
 
@@ -291,10 +291,9 @@ def layer_norm(x, normalized_shape, weight=None, bias=None, eps=1e-5, out=None):
 	ndim = len(x.shape)
 	axes = tuple(range(ndim - len(normalized_shape), ndim))
 	
-	# VRAM-efficient variance on GPU: E[x²] - E[x]²
-	mean = cp.mean(x, axis=axes, keepdims=True)
-	mean_sq = cp.mean(cp.square(x), axis=axes, keepdims=True)
-	var = mean_sq - cp.square(mean)
+        mean = cp.mean(x, axis=axes, keepdims=True)
+        centered = cp.subtract(x, mean)
+        var = cp.mean(cp.multiply(centered, centered), axis=axes, keepdims=True)
 	
 	inv_std = cp.reciprocal(cp.sqrt(var + eps))
 	

@@ -1,9 +1,9 @@
 """Tensor implementation for PySML.
 
 The previous version of this file provided only a very small subset of the
-functionality exposed by frameworks such as PyTorch.  Several parts of the
+functionality exposed by frameworks such as PyTorch. Several parts of the
 library – including the official Transformer example – therefore crashed when
-invoking convenience methods like :meth:`Tensor.reshape`.  This rewrite refreshes
+invoking convenience methods like :meth:`Tensor.reshape`. This rewrite refreshes
 the class with a modern, PyTorch-inspired API while preserving the existing
 autograd engine.
 """
@@ -160,21 +160,31 @@ class Tensor:
         topo_order: list[Tensor] = []
         visited: set[int] = set()
 
-        def build_topo(node: Optional[Tensor]) -> None:
-            if node is None or id(node) in visited:
-                return
-            visited.add(id(node))
+        stack: list[tuple[Optional[Tensor], bool]] = [(self, False)]
+
+        while stack:
+            node, processed = stack.pop()
+            if node is None:
+                continue
+
+            node_id = id(node)
+            if processed:
+                topo_order.append(node)
+                continue
+
+            if node_id in visited:
+                continue
+
+            visited.add(node_id)
+            stack.append((node, True))
 
             if node._grad_fn is not None:
                 for input_ref in node._grad_fn.inputs:
-                    if input_ref is not None:
-                        input_tensor = input_ref()
-                        if input_tensor is not None:
-                            build_topo(input_tensor)
-
-            topo_order.append(node)
-
-        build_topo(self)
+                    if input_ref is None:
+                        continue
+                    input_tensor = input_ref()
+                    if input_tensor is not None:
+                        stack.append((input_tensor, False))
 
         self._grad = gradient
 
