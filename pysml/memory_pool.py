@@ -16,12 +16,9 @@ class TensorBufferPool:
 			self._enabled = False
 			self._pools.clear()
 	
-	def get_buffer(self, shape, dtype, backend, device):
-		if getattr(backend, 'BACKEND_NAME', None) in ('cuda', 'xpu'):
-			return None
-
-		if not self._enabled:
-			return None
+        def get_buffer(self, shape, dtype, backend, device):
+                if not self._enabled:
+                        return None
 			
 		key = (tuple(shape), str(dtype), backend.BACKEND_NAME, str(device))
 		
@@ -32,12 +29,9 @@ class TensorBufferPool:
 		
 		return None
 	
-	def return_buffer(self, buffer, shape, dtype, backend, device):
-		if getattr(backend, 'BACKEND_NAME', None) in ('cuda', 'xpu'):
-			return
-
-		if not self._enabled:
-			return
+        def return_buffer(self, buffer, shape, dtype, backend, device):
+                if not self._enabled:
+                        return
 			
 		key = (tuple(shape), str(dtype), backend.BACKEND_NAME, str(device))
 		

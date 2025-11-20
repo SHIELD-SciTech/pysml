@@ -16,10 +16,11 @@ class Function:
                 self.next_functions = []  # For graph traversal
 
         def apply_backward(self, grad_output):
-                result = self.backward_fn(grad_output, *self.inputs, **self.metadata)
-                # Release saved references after backward to avoid leaks.
-                self._saved_inputs = None
-                return result
+                try:
+                        return self.backward_fn(grad_output, *self.inputs, **self.metadata)
+                finally:
+                        # Release saved references after backward to avoid leaks even if backward fails.
+                        self._saved_inputs = None
 
 
 def register_post_backward_hook(tensor: Tensor, hook: Callable[[Tensor], None]):
