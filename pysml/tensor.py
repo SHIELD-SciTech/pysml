@@ -18,6 +18,7 @@ from typing import Optional, Union, Callable, Any
 
 
 from .dtype import bf16
+from .memory_pool import get_buffer_pool
 
 DeviceLike = Union[str, "Tensor", None]
 ShapeLike = Union[int, Sequence[int]]
@@ -32,6 +33,7 @@ class Tensor:
         instance._grad_fn = None
         instance._grad = None
         instance._requires_grad = False
+        instance._version = 0
         return instance
 
     __slots__ = (
@@ -43,6 +45,7 @@ class Tensor:
         "_backend",
         "device",
         "active_device",
+        "_version",
         "_post_backward_hooks",
         "__weakref__",
     )
@@ -57,13 +60,21 @@ class Tensor:
         self._requires_grad = requires_grad
         self._grad = None
         self._grad_fn = None
+        self._version = 0
 
         self._dtype = dtype or DEFAULT_DTYPE
         backend, device_index, device_string = self._resolve_backend(device)
         self._backend = backend
         self.device = device_index
         self.active_device = device_string
-        self.data = backend.convert(data, self._dtype, device=device_index)
+
+        converted = backend.convert(data, self._dtype, device=device_index)
+        buffer = _request_buffer(converted.shape, self._dtype, backend, device_index)
+        if buffer is not None:
+            backend.copyto(buffer, converted)
+            converted = buffer
+
+        self.data = converted
         self._post_backward_hooks: list[Callable[["Tensor"], None]] = []
 
     # ------------------------------------------------------------------
@@ -231,9 +242,6 @@ class Tensor:
                         input_tensor._grad = input_tensor._new_like(grad_buffer, requires_grad=False)
 
                 input_tensor._run_post_backward_hooks()
-
-        if not retain_graph:
-            self._grad_fn = None
 
     # ------------------------------------------------------------------
     # Device and dtype management
@@ -433,22 +441,39 @@ class Tensor:
         cloned._grad_fn = None
         cloned.device = self.device
         cloned.active_device = self.active_device
-        cloned.data = self._backend.copy(self.data)
+        cloned._version = getattr(self, "_version", 0)
+
+        buffer = _request_buffer(self.data.shape, self._dtype, self._backend, self.device)
+        if buffer is not None:
+            self._backend.copyto(buffer, self.data)
+            cloned.data = buffer
+        else:
+            cloned.data = self._backend.copy(self.data)
         return cloned
 
     # ------------------------------------------------------------------
     # Memory helpers
     # ------------------------------------------------------------------
     def free(self) -> None:
-        if self.data is not None:
-            del self.data
-            self.data = None
+        if getattr(self, "data", None) is not None:
+            try:
+                _return_buffer(self.data, self._dtype, self._backend, self.device)
+            finally:
+                del self.data
+                self.data = None
         if self._grad is not None:
             del self._grad
             self._grad = None
         if self._grad_fn is not None:
             self._grad_fn = None
         gc.collect()
+
+    def __del__(self):
+        try:
+            self.free()
+        except Exception:
+            # Avoid exceptions during interpreter shutdown
+            pass
 
     # ------------------------------------------------------------------
     # Python protocol helpers
@@ -539,8 +564,18 @@ class Tensor:
         new_tensor._grad_fn = None
         new_tensor.device = self.device
         new_tensor.active_device = self.active_device
+        new_tensor._version = getattr(self, "_version", 0)
+
+        buffer = _request_buffer(getattr(data, "shape", None), new_tensor._dtype, new_tensor._backend, new_tensor.device)
+        if buffer is not None:
+            new_tensor._backend.copyto(buffer, data)
+            data = buffer
+
         new_tensor.data = data
         return new_tensor
+
+    def _bump_version(self) -> None:
+        self._version = getattr(self, "_version", 0) + 1
 
     @staticmethod
     def _resolve_backend(device: DeviceLike):
@@ -585,6 +620,27 @@ def _parse_device_index(device: str) -> Optional[int]:
     if not index_str:
         return None
     return int(index_str)
+
+
+def _request_buffer(shape, dtype, backend, device):
+    if shape is None or backend is None:
+        return None
+    try:
+        return get_buffer_pool().get_buffer(shape, dtype, backend, device)
+    except Exception:
+        return None
+
+
+def _return_buffer(buffer, dtype, backend, device):
+    if buffer is None or dtype is None or backend is None:
+        return
+    shape = getattr(buffer, "shape", None)
+    if shape is None:
+        return
+    try:
+        get_buffer_pool().return_buffer(buffer, shape, dtype, backend, device)
+    except Exception:
+        return
 
 
 from .cpu import backend as cpu_backend
