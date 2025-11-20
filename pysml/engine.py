@@ -19,6 +19,8 @@ backward_log, backward_tanh, backward_sum, backward_mean, backward_transpose,
 import builtins
 import gc
 
+from pysml.memory_pool import get_buffer_pool
+
 backend_priority = ["cpu", "xpu", "cuda"]
 
 def _requires_grad(obj):
@@ -42,6 +44,57 @@ def _backend(*tensors):
 ENSURE_BACKEND = False
 
 
+_BUFFER_POOL = get_buffer_pool()
+
+
+def _maybe_allocate_buffer(shape, dtype, backend, device):
+        if shape is None:
+                return None
+        try:
+                return _BUFFER_POOL.get_buffer(shape, dtype, backend, device)
+        except Exception:
+                return None
+
+
+def _wrap_result(template, backend, requires_grad, data):
+        pooled = data
+        buffer = _maybe_allocate_buffer(getattr(data, "shape", None), template._dtype, backend, template.device)
+        if buffer is not None and buffer is not data:
+                backend.copyto(buffer, data)
+                pooled = buffer
+
+        out = Tensor.__new__(Tensor)
+        out._requires_grad = requires_grad
+        out._grad = None
+        out._grad_fn = None
+        out._dtype = template._dtype
+        out._backend = backend
+        out.device = template.device
+        out.active_device = template.active_device
+        out._version = getattr(template, "_version", 0)
+        out.data = pooled
+        return out
+
+
+def _prepare_inplace_out(out, template, backend, requires_grad):
+        out._requires_grad = requires_grad
+        out._grad = None
+        out._grad_fn = None
+        out._dtype = template._dtype
+        out._backend = backend
+        out.device = template.device
+        out.active_device = template.active_device
+        out._bump_version()
+        return out
+
+
+def _attach_grad_fn(out, backward_fn, inputs, metadata=None):
+        if is_grad_enabled() and out._requires_grad:
+                out._grad_fn = Function(backward_fn, inputs, metadata=metadata or {})
+        else:
+                out._grad_fn = None
+
+
 # ============================================================================
 # Arithmetic operations with autograd
 # ============================================================================
@@ -56,29 +109,20 @@ def add(input, other, alpha=1, out=None):
         # Handle alpha scaling
         if alpha != 1:
                 other_data = backend.multiply(other_data, alpha)
-        
+
         if out is None:
-                result_data = backend.add(input.data, other_data)
-                out = Tensor.__new__(Tensor)
-                out._requires_grad = input._requires_grad or _requires_grad(other)
-                out._grad = None
-                out._dtype = input._dtype
-                out._backend = backend
-                out.device = input.device
-                out.active_device = input.active_device
-                out.data = result_data
-                
-                # Build computational graph if needed
-                if is_grad_enabled() and out._requires_grad:
-                        out._grad_fn = Function(
-                                backward_add,
-                                [input, other if hasattr(other, '_requires_grad') else None],
-                                metadata={'alpha': alpha}
-                        )
+                buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
+                if buffer is not None:
+                        result_data = backend.add(input.data, other_data, out=buffer)
+                else:
+                        result_data = backend.add(input.data, other_data)
+
+                out = _wrap_result(input, backend, input._requires_grad or _requires_grad(other), result_data)
         else:
-                # In-place operation - no gradient tracking
                 backend.add(input.data, other_data, out=out.data)
-        
+                out = _prepare_inplace_out(out, input, backend, input._requires_grad or _requires_grad(other))
+
+        _attach_grad_fn(out, backward_add, [input, other if hasattr(other, '_requires_grad') else None], metadata={'alpha': alpha})
         return out
 
 
@@ -88,28 +132,21 @@ def subtract(input, other, out=None):
                 backend = _backend(input, other)
         
         other_data = other.data if hasattr(other, 'data') else other
-        
+
         if out is None:
-                result_data = backend.subtract(input.data, other_data)
-                out = Tensor.__new__(Tensor)
-                out._requires_grad = input._requires_grad or _requires_grad(other)
-                out._grad = None
-                out._dtype = input._dtype
-                out._backend = backend
-                out.device = input.device
-                out.active_device = input.active_device
-                out.data = result_data
-                
-                # Build computational graph
-                if is_grad_enabled() and out._requires_grad:
-                        out._grad_fn = Function(
-                                backward_subtract,
-                                [input, other if hasattr(other, '_requires_grad') else None],
-                                metadata={}
-                        )
+                buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
+                if buffer is not None:
+                        result_data = backend.subtract(input.data, other_data, out=buffer)
+                else:
+                        result_data = backend.subtract(input.data, other_data)
+
+                out = _wrap_result(input, backend, input._requires_grad or _requires_grad(other), result_data)
         else:
                 backend.subtract(input.data, other_data, out=out.data)
-        
+
+                out = _prepare_inplace_out(out, input, backend, input._requires_grad or _requires_grad(other))
+
+        _attach_grad_fn(out, backward_subtract, [input, other if hasattr(other, '_requires_grad') else None])
         return out
 
 
@@ -117,35 +154,28 @@ def multiply(input, other, out=None):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(other, '_backend'):
                 backend = _backend(input, other)
-        
+
         other_data = other.data if hasattr(other, 'data') else other
         is_scalar = not hasattr(other, 'data')
-        
+
         if out is None:
-                result_data = backend.multiply(input.data, other_data)
-                out = Tensor.__new__(Tensor)
-                out._requires_grad = input._requires_grad or _requires_grad(other)
-                out._grad = None
-                out._dtype = input._dtype
-                out._backend = backend
-                out.device = input.device
-                out.active_device = input.active_device
-                out.data = result_data
-                
-                # Build computational graph
-                if is_grad_enabled() and out._requires_grad:
-                        metadata = {}
-                        if is_scalar:
-                                metadata['other_scalar'] = other_data
-                        
-                        out._grad_fn = Function(
-                                backward_multiply,
-                                [input, other if hasattr(other, '_requires_grad') else None],
-                                metadata=metadata
-                        )
+                buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
+                if buffer is not None:
+                        result_data = backend.multiply(input.data, other_data, out=buffer)
+                else:
+                        result_data = backend.multiply(input.data, other_data)
+
+                out = _wrap_result(input, backend, input._requires_grad or _requires_grad(other), result_data)
         else:
                 backend.multiply(input.data, other_data, out=out.data)
-        
+
+                out = _prepare_inplace_out(out, input, backend, input._requires_grad or _requires_grad(other))
+
+        metadata = {}
+        if is_scalar:
+                metadata['other_scalar'] = other_data
+
+        _attach_grad_fn(out, backward_multiply, [input, other if hasattr(other, '_requires_grad') else None], metadata=metadata)
         return out
 
 
@@ -156,32 +186,25 @@ def divide(input, other, out=None):
         
         other_data = other.data if hasattr(other, 'data') else other
         is_scalar = not hasattr(other, 'data')
-        
+
         if out is None:
-                result_data = backend.divide(input.data, other_data)
-                out = Tensor.__new__(Tensor)
-                out._requires_grad = input._requires_grad or _requires_grad(other)
-                out._grad = None
-                out._dtype = input._dtype
-                out._backend = backend
-                out.device = input.device
-                out.active_device = input.active_device
-                out.data = result_data
-                
-                # Build computational graph
-                if is_grad_enabled() and out._requires_grad:
-                        metadata = {}
-                        if is_scalar:
-                                metadata['other_scalar'] = other_data
-                        
-                        out._grad_fn = Function(
-                                backward_divide,
-                                [input, other if hasattr(other, '_requires_grad') else None],
-                                metadata=metadata
-                        )
+                buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
+                if buffer is not None:
+                        result_data = backend.divide(input.data, other_data, out=buffer)
+                else:
+                        result_data = backend.divide(input.data, other_data)
+
+                out = _wrap_result(input, backend, input._requires_grad or _requires_grad(other), result_data)
         else:
                 backend.divide(input.data, other_data, out=out.data)
-        
+
+                out = _prepare_inplace_out(out, input, backend, input._requires_grad or _requires_grad(other))
+
+        metadata = {}
+        if is_scalar:
+                metadata['other_scalar'] = other_data
+
+        _attach_grad_fn(out, backward_divide, [input, other if hasattr(other, '_requires_grad') else None], metadata=metadata)
         return out
 
 
@@ -192,56 +215,41 @@ def power(input, exponent, out=None):
         
         exponent_data = exponent.data if hasattr(exponent, 'data') else exponent
         exponent_value = float(exponent_data) if not hasattr(exponent_data, '__len__') else exponent_data
-        
+
         if out is None:
-                result_data = backend.power(input.data, exponent_data)
-                out = Tensor.__new__(Tensor)
-                out._requires_grad = input._requires_grad
-                out._grad = None
-                out._dtype = input._dtype
-                out._backend = backend
-                out.device = input.device
-                out.active_device = input.active_device
-                out.data = result_data
-                
-                # Build computational graph
-                if is_grad_enabled() and out._requires_grad:
-                        out._grad_fn = Function(
-                                backward_power,
-                                [input],
-                                metadata={'exponent': exponent_value}
-                        )
+                buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
+                if buffer is not None:
+                        result_data = backend.power(input.data, exponent_data, out=buffer)
+                else:
+                        result_data = backend.power(input.data, exponent_data)
+
+                out = _wrap_result(input, backend, input._requires_grad, result_data)
         else:
                 backend.power(input.data, exponent_data, out=out.data)
-        
+
+                out = _prepare_inplace_out(out, input, backend, input._requires_grad)
+
+        _attach_grad_fn(out, backward_power, [input], metadata={'exponent': exponent_value})
         return out
 
 
 def negative(input, out=None):
         backend = input._backend
-        
+
         if out is None:
-                result_data = backend.negative(input.data)
-                out = Tensor.__new__(Tensor)
-                out._requires_grad = input._requires_grad
-                out._grad = None
-                out._dtype = input._dtype
-                out._backend = backend
-                out.device = input.device
-                out.active_device = input.active_device
-                out.data = result_data
-                
-                # Build computational graph
-                if is_grad_enabled() and out._requires_grad:
-                        # negative is just multiply by -1
-                        out._grad_fn = Function(
-                                backward_multiply,
-                                [input, None],
-                                metadata={'other_scalar': -1.0}
-                        )
+                buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
+                if buffer is not None:
+                        result_data = backend.negative(input.data, out=buffer)
+                else:
+                        result_data = backend.negative(input.data)
+
+                out = _wrap_result(input, backend, input._requires_grad, result_data)
         else:
                 backend.negative(input.data, out=out.data)
-        
+
+                out = _prepare_inplace_out(out, input, backend, input._requires_grad)
+
+        _attach_grad_fn(out, backward_multiply, [input, None], metadata={'other_scalar': -1.0})
         return out
 
 
@@ -253,32 +261,25 @@ def matmul(input, other, out=None):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(other, '_backend'):
                 backend = _backend(input, other)
-        
+
         if out is None:
-                result_data = backend.matmul(input.data, other.data)
-                out = Tensor.__new__(Tensor)
-                out._requires_grad = input._requires_grad or _requires_grad(other)
-                out._grad = None
-                out._dtype = input._dtype
-                out._backend = backend
-                out.device = input.device
-                out.active_device = input.active_device
-                out.data = result_data
-                
-                # Build computational graph
-                if is_grad_enabled() and out._requires_grad:
-                        out._grad_fn = Function(
-                                backward_matmul,
-                                [input, other],
-                                metadata={}
-                        )
+                buffer = _maybe_allocate_buffer((input.data.shape[0], other.data.shape[1]), input._dtype, backend, input.device)
+                if buffer is not None:
+                        result_data = backend.matmul(input.data, other.data, out=buffer)
+                else:
+                        result_data = backend.matmul(input.data, other.data)
+
+                out = _wrap_result(input, backend, input._requires_grad or _requires_grad(other), result_data)
         else:
                 try:
                         backend.matmul(input.data, other.data, out=out.data)
                 except:
                         result = backend.matmul(input.data, other.data)
                         backend.copyto(out.data, result)
-        
+
+                out = _prepare_inplace_out(out, input, backend, input._requires_grad or _requires_grad(other))
+
+        _attach_grad_fn(out, backward_matmul, [input, other])
         return out
 
 
@@ -288,169 +289,126 @@ def matmul(input, other, out=None):
 
 def relu(input, out=None):
         backend = input._backend
-        
+
         if out is None:
-                result_data = backend.maximum(input.data, 0)
-                out = Tensor.__new__(Tensor)
-                out._requires_grad = input._requires_grad
-                out._grad = None
-                out._dtype = input._dtype
-                out._backend = backend
-                out.device = input.device
-                out.active_device = input.active_device
-                out.data = result_data
-                
-                # Build computational graph
-                if is_grad_enabled() and out._requires_grad:
-                        out._grad_fn = Function(
-                                backward_relu,
-                                [input],
-                                metadata={}
-                        )
+                buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
+                if buffer is not None:
+                        result_data = backend.maximum(input.data, 0, out=buffer)
+                else:
+                        result_data = backend.maximum(input.data, 0)
+
+                out = _wrap_result(input, backend, input._requires_grad, result_data)
         else:
                 backend.maximum(input.data, 0, out=out.data)
-        
+
+                out = _prepare_inplace_out(out, input, backend, input._requires_grad)
+
+        _attach_grad_fn(out, backward_relu, [input])
         return out
 
 
 def exp(input, out=None):
         backend = input._backend
-        
+
         if out is None:
-                result_data = backend.exp(input.data)
-                out = Tensor.__new__(Tensor)
-                out._requires_grad = input._requires_grad
-                out._grad = None
-                out._dtype = input._dtype
-                out._backend = backend
-                out.device = input.device
-                out.active_device = input.active_device
-                out.data = result_data
-                
-                # Build computational graph
-                if is_grad_enabled() and out._requires_grad:
-                        out._grad_fn = Function(
-                                backward_exp,
-                                [input],
-                                metadata={}
-                        )
+                buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
+                if buffer is not None:
+                        result_data = backend.exp(input.data, out=buffer)
+                else:
+                        result_data = backend.exp(input.data)
+
+                out = _wrap_result(input, backend, input._requires_grad, result_data)
         else:
                 backend.exp(input.data, out=out.data)
-        
+
+                out = _prepare_inplace_out(out, input, backend, input._requires_grad)
+
+        _attach_grad_fn(out, backward_exp, [input])
         return out
 
 
 def log(input, out=None):
         backend = input._backend
-        
+
         if out is None:
-                result_data = backend.log(input.data)
-                out = Tensor.__new__(Tensor)
-                out._requires_grad = input._requires_grad
-                out._grad = None
-                out._dtype = input._dtype
-                out._backend = backend
-                out.device = input.device
-                out.active_device = input.active_device
-                out.data = result_data
-                
-                # Build computational graph
-                if is_grad_enabled() and out._requires_grad:
-                        out._grad_fn = Function(
-                                backward_log,
-                                [input],
-                                metadata={}
-                        )
+                buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
+                if buffer is not None:
+                        result_data = backend.log(input.data, out=buffer)
+                else:
+                        result_data = backend.log(input.data)
+
+                out = _wrap_result(input, backend, input._requires_grad, result_data)
         else:
                 backend.log(input.data, out=out.data)
-        
+
+                out = _prepare_inplace_out(out, input, backend, input._requires_grad)
+
+        _attach_grad_fn(out, backward_log, [input])
         return out
 
 
 def tanh(input, out=None):
         backend = input._backend
-        
+
         if out is None:
-                result_data = backend.tanh(input.data)
-                out = Tensor.__new__(Tensor)
-                out._requires_grad = input._requires_grad
-                out._grad = None
-                out._dtype = input._dtype
-                out._backend = backend
-                out.device = input.device
-                out.active_device = input.active_device
-                out.data = result_data
-                
-                # Build computational graph
-                if is_grad_enabled() and out._requires_grad:
-                        out._grad_fn = Function(
-                                backward_tanh,
-                                [input],
-                                metadata={'output': result_data}
-                        )
+                buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
+                if buffer is not None:
+                        result_data = backend.tanh(input.data, out=buffer)
+                else:
+                        result_data = backend.tanh(input.data)
+
+                out = _wrap_result(input, backend, input._requires_grad, result_data)
         else:
                 backend.tanh(input.data, out=out.data)
-        
+
+                out = _prepare_inplace_out(out, input, backend, input._requires_grad)
+
+        _attach_grad_fn(out, backward_tanh, [input], metadata={'output': out.data})
         return out
 
 
 def sigmoid(input, out=None):
         backend = input._backend
-        
+
         if out is None:
                 # sigmoid(x) = 1 / (1 + exp(-x))
-                result_data = backend.reciprocal(
-                        backend.add(1.0, backend.exp(backend.negative(input.data)))
-                )
-                out = Tensor.__new__(Tensor)
-                out._requires_grad = input._requires_grad
-                out._grad = None
-                out._dtype = input._dtype
-                out._backend = backend
-                out.device = input.device
-                out.active_device = input.active_device
-                out.data = result_data
-                
-                # Build computational graph
-                if is_grad_enabled() and out._requires_grad:
-                        out._grad_fn = Function(
-                                backward_sigmoid,
-                                [input],
-                                metadata={'output': result_data}
-                        )
+                temp = backend.add(1.0, backend.exp(backend.negative(input.data)))
+                buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
+                if buffer is not None:
+                        result_data = backend.reciprocal(temp, out=buffer)
+                else:
+                        result_data = backend.reciprocal(temp)
+
+                out = _wrap_result(input, backend, input._requires_grad, result_data)
         else:
                 temp = backend.reciprocal(
                         backend.add(1.0, backend.exp(backend.negative(input.data)))
                 )
                 backend.copyto(out.data, temp)
-        
+
+                out = _prepare_inplace_out(out, input, backend, input._requires_grad)
+
+        _attach_grad_fn(out, backward_sigmoid, [input], metadata={'output': out.data})
         return out
 
 
 def sqrt(input, out=None):
         backend = input._backend
-        
+
         if out is None:
-                result_data = backend.sqrt(input.data)
-                out = Tensor.__new__(Tensor)
-                out._requires_grad = input._requires_grad
-                out._grad = None
-                out._dtype = input._dtype
-                out._backend = backend
-                out.device = input.device
-                out.active_device = input.active_device
-                out.data = result_data
-                
-                # Build computational graph
-                if is_grad_enabled() and out._requires_grad:
-                        out._grad_fn = Function(
-                                backward_sqrt,
-                                [input],
-                                metadata={}
-                        )
+                buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
+                if buffer is not None:
+                        result_data = backend.sqrt(input.data, out=buffer)
+                else:
+                        result_data = backend.sqrt(input.data)
+
+                out = _wrap_result(input, backend, input._requires_grad, result_data)
         else:
                 backend.sqrt(input.data, out=out.data)
-        
+
+                out = _prepare_inplace_out(out, input, backend, input._requires_grad)
+
+        _attach_grad_fn(out, backward_sqrt, [input])
         return out
 
 
