@@ -310,10 +310,9 @@ def layer_norm(x, normalized_shape, weight=None, bias=None, eps=1e-5, out=None):
 	ndim = len(x.shape)
 	axes = tuple(range(ndim - len(normalized_shape), ndim))
 	
-	# VRAM-efficient variance on XPU: E[x²] - E[x]²
-	mean = ng.mean(x, axis=axes, keepdims=True)
-	mean_sq = ng.mean(ng.square(x), axis=axes, keepdims=True)
-	var = mean_sq - ng.square(mean)
+        mean = ng.mean(x, axis=axes, keepdims=True)
+        centered = ng.subtract(x, mean)
+        var = ng.mean(ng.multiply(centered, centered), axis=axes, keepdims=True)
 	
 	inv_std = ng.reciprocal(ng.sqrt(var + eps))
 	
