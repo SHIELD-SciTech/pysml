@@ -9,7 +9,6 @@ class Function:
 
         def __init__(self, backward_fn: Callable, inputs: List, metadata: dict = None):
                 # Store weak references to inputs to avoid reference cycles
-                self._saved_inputs = list(inputs)
                 self.inputs = [weakref.ref(t) if t is not None else None for t in inputs]
                 self.backward_fn = backward_fn
                 self.metadata = metadata or {}
@@ -1332,38 +1331,34 @@ def backward_concatenate(grad_output, *input_refs, **metadata):
 def backward_split(grad_output, input_ref, **metadata):
         """
         Backward for split/chunk
-
+        
         Concatenate gradients from all output chunks
         """
         grads = []
-
+        
         input_tensor = input_ref() if input_ref else None
-
+        
         if input_tensor and input_tensor._requires_grad:
-                backend = getattr(grad_output, '_backend', input_tensor._backend)
+                backend = grad_output._backend
                 axis = metadata.get('axis', 0)
-                sizes = metadata.get('sizes', [])
-                index = metadata.get('index', 0)
-
-                zeros_like = getattr(backend, 'zeros_like', None)
-                base = zeros_like(input_tensor.data) if zeros_like else backend.zeros(input_tensor.shape)
-
-                start = sum(sizes[:index]) if sizes else 0
-                end = start + grad_output.data.shape[axis]
-                slices = [slice(None)] * grad_output.data.ndim
-                slices[axis] = slice(start, end)
-                base[tuple(slices)] = grad_output.data
-
+                
                 grad = type(grad_output).__new__(type(grad_output))
                 grad._backend = backend
                 grad._dtype = grad_output._dtype
                 grad.device = grad_output.device
                 grad.active_device = grad_output.active_device
-                grad.data = base
+                
+                # grad_output should be a list/tuple of gradients
+                # Concatenate them along the split axis
+                if isinstance(grad_output, (list, tuple)):
+                        grad.data = backend.concatenate([g.data for g in grad_output], axis=axis)
+                else:
+                        grad.data = grad_output.data
+                
                 grad._requires_grad = False
                 grad._grad = None
                 grad._grad_fn = None
-
+                
                 grads.append((input_tensor, grad))
         else:
                 grads.append(None)
