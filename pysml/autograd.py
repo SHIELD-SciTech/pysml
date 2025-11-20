@@ -5,7 +5,9 @@ from .tensor import Tensor
 
 
 class Function:
-	def __init__(self, backward_fn: Callable, inputs: List, metadata: dict = None):
+        __slots__ = ('inputs', 'backward_fn', 'metadata', 'next_functions')
+
+        def __init__(self, backward_fn: Callable, inputs: List, metadata: dict = None):
 		# Store weak references to inputs to avoid reference cycles
 		self.inputs = [weakref.ref(t) if t is not None else None for t in inputs]
 		self.backward_fn = backward_fn
@@ -1166,7 +1168,7 @@ def backward_embedding(grad_output, input_ref, **metadata):
                 grad.device = grad_output.device
                 grad.active_device = grad_output.active_device
 
-                embedding_dim = input_tensor.shape[-1]
+                embedding_dim = grad_output.shape[-1]
                 grad_shape = (num_embeddings, embedding_dim)
                 grad.data = backend.zeros(grad_shape, dtype=grad_output.data.dtype)
 

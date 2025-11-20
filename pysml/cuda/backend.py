@@ -1,9 +1,23 @@
 try:
-	import cupy as cp
-	AVAILABLE = True
+        import cupy as cp
+        AVAILABLE = True
 except:
-	AVAILABLE = False
-	import numpy as cp
+        AVAILABLE = False
+        import numpy as cp
+
+if AVAILABLE:
+        _gelu_kernel = cp.ElementwiseKernel(
+                'T x', 'T y',
+                'y = 0.5 * x * (1.0 + tanh(0.7978845608 * (x + 0.044715 * x * x * x)))',
+                'gelu_fused'
+        )
+else:
+        def _gelu_kernel(x, out=None):
+                result = 0.5 * x * (1.0 + cp.tanh(0.7978845608 * (x + 0.044715 * x * x * x)))
+                if out is None:
+                        return result
+                cp.copyto(out, result)
+                return out
 
 
 precission_map = {"fp32": "float32", "fp16": "float16", "bf16": "float16"}
@@ -256,20 +270,9 @@ def log_softmax(x, axis=-1, out=None):
 
 
 def gelu(x, out=None):
-	if out is not None:
-		# Chain of in-place GPU ops - ZERO extra VRAM
-		cp.multiply(x, x, out=out)  # x²
-		cp.multiply(out, x, out=out)  # x³
-		cp.multiply(out, 0.044715, out=out)
-		cp.add(out, x, out=out)
-		cp.multiply(out, 0.7978845608, out=out)
-		cp.tanh(out, out=out)  # cuDNN accelerated
-		cp.add(out, 1.0, out=out)
-		cp.multiply(out, x, out=out)
-		cp.multiply(out, 0.5, out=out)
-		return out
-	else:
-		return 0.5 * x * (1.0 + cp.tanh(0.7978845608 * (x + 0.044715 * x * x * x)))
+        if out is None:
+                return _gelu_kernel(x)
+        return _gelu_kernel(x, out)
 
 
 def silu(x, out=None):

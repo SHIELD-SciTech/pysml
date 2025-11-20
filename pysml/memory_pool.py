@@ -17,6 +17,9 @@ class TensorBufferPool:
 			self._pools.clear()
 	
 	def get_buffer(self, shape, dtype, backend, device):
+		if getattr(backend, 'BACKEND_NAME', None) in ('cuda', 'xpu'):
+			return None
+
 		if not self._enabled:
 			return None
 			
@@ -30,6 +33,9 @@ class TensorBufferPool:
 		return None
 	
 	def return_buffer(self, buffer, shape, dtype, backend, device):
+		if getattr(backend, 'BACKEND_NAME', None) in ('cuda', 'xpu'):
+			return
+
 		if not self._enabled:
 			return
 			
