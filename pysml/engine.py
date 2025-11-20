@@ -386,7 +386,7 @@ def tanh(input, out=None):
                         out._grad_fn = Function(
                                 backward_tanh,
                                 [input],
-                                metadata={}
+                                metadata={'output': result_data}
                         )
         else:
                 backend.tanh(input.data, out=out.data)
@@ -416,7 +416,7 @@ def sigmoid(input, out=None):
                         out._grad_fn = Function(
                                 backward_sigmoid,
                                 [input],
-                                metadata={}
+                                metadata={'output': result_data}
                         )
         else:
                 temp = backend.reciprocal(
@@ -1264,7 +1264,11 @@ def softmax(input, axis=-1, out=None):
                 out.data = result_data
                 
                 if is_grad_enabled() and out._requires_grad:
-                        out._grad_fn = Function(backward_softmax, [input], metadata={'axis': axis})
+                        out._grad_fn = Function(
+                                backward_softmax,
+                                [input],
+                                metadata={'axis': axis, 'output': result_data}
+                        )
         else:
                 backend.softmax(input.data, axis=axis, out=out.data)
         
@@ -1346,7 +1350,13 @@ def layer_norm(input, normalized_shape, weight=None, bias=None, eps=1e-5):
         weight_data = weight.data if weight is not None else None
         bias_data = bias.data if bias is not None else None
         
-        result_data = backend.layer_norm(input.data, normalized_shape, weight_data, bias_data, eps)
+        result = backend.layer_norm(
+                input.data, normalized_shape, weight_data, bias_data, eps, return_stats=True
+        )
+        if isinstance(result, tuple):
+                result_data, saved_mean, inv_std = result
+        else:
+                result_data, saved_mean, inv_std = result, None, None
         
         out = Tensor.__new__(Tensor)
         out._requires_grad = input._requires_grad
@@ -1360,7 +1370,13 @@ def layer_norm(input, normalized_shape, weight=None, bias=None, eps=1e-5):
         if is_grad_enabled() and out._requires_grad:
                 out._grad_fn = Function(
                         backward_layer_norm, [input],
-                        metadata={'normalized_shape': normalized_shape, 'eps': eps, 'gamma': weight_data}
+                        metadata={
+                                'normalized_shape': normalized_shape,
+                                'eps': eps,
+                                'gamma': weight_data,
+                                'mean': saved_mean,
+                                'inv_std': inv_std,
+                        }
                 )
         
         return out
@@ -1373,7 +1389,11 @@ def rms_norm(input, normalized_shape, weight=None, eps=1e-6):
                 normalized_shape = (normalized_shape,)
         
         weight_data = weight.data if weight is not None else None
-        result_data = backend.rms_norm(input.data, normalized_shape, weight_data, eps)
+        result = backend.rms_norm(input.data, normalized_shape, weight_data, eps, return_stats=True)
+        if isinstance(result, tuple):
+                result_data, inv_rms = result
+        else:
+                result_data, inv_rms = result, None
         
         out = Tensor.__new__(Tensor)
         out._requires_grad = input._requires_grad
@@ -1387,7 +1407,12 @@ def rms_norm(input, normalized_shape, weight=None, eps=1e-6):
         if is_grad_enabled() and out._requires_grad:
                 out._grad_fn = Function(
                         backward_rms_norm, [input],
-                        metadata={'normalized_shape': normalized_shape, 'eps': eps, 'gamma': weight_data}
+                        metadata={
+                                'normalized_shape': normalized_shape,
+                                'eps': eps,
+                                'gamma': weight_data,
+                                'inv_rms': inv_rms,
+                        }
                 )
         
         return out

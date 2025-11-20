@@ -253,9 +253,9 @@ def silu(x, out=None):
 		return x / (1.0 + np.exp(-np.clip(x, -20, 20)))
 
 
-def layer_norm(x, normalized_shape, weight=None, bias=None, eps=1e-5, out=None):
-	ndim = len(x.shape)
-	axes = tuple(range(ndim - len(normalized_shape), ndim))
+def layer_norm(x, normalized_shape, weight=None, bias=None, eps=1e-5, out=None, return_stats=False):
+        ndim = len(x.shape)
+        axes = tuple(range(ndim - len(normalized_shape), ndim))
 	
 	# RAM-efficient variance: E[x²] - E[x]²
 	mean = np.mean(x, axis=axes, keepdims=True)
@@ -264,40 +264,46 @@ def layer_norm(x, normalized_shape, weight=None, bias=None, eps=1e-5, out=None):
 	
 	inv_std = np.reciprocal(np.sqrt(var + eps))
 	
-	if out is not None:
-		np.subtract(x, mean, out=out)
-		np.multiply(out, inv_std, out=out)
-		if weight is not None:
-			np.multiply(out, weight, out=out)
-		if bias is not None:
-			np.add(out, bias, out=out)
-		return out
-	else:
-		x_norm = (x - mean) * inv_std
-		if weight is not None:
-			x_norm = x_norm * weight
-		if bias is not None:
-			x_norm = x_norm + bias
-		return x_norm
+        if out is not None:
+                np.subtract(x, mean, out=out)
+                np.multiply(out, inv_std, out=out)
+                if weight is not None:
+                        np.multiply(out, weight, out=out)
+                if bias is not None:
+                        np.add(out, bias, out=out)
+                result = out
+        else:
+                result = (x - mean) * inv_std
+                if weight is not None:
+                        result = result * weight
+                if bias is not None:
+                        result = result + bias
+
+        if return_stats:
+                return result, mean, inv_std
+        return result
 
 
-def rms_norm(x, normalized_shape, weight=None, eps=1e-6, out=None):
-	ndim = len(x.shape)
-	axes = tuple(range(ndim - len(normalized_shape), ndim))
+def rms_norm(x, normalized_shape, weight=None, eps=1e-6, out=None, return_stats=False):
+        ndim = len(x.shape)
+        axes = tuple(range(ndim - len(normalized_shape), ndim))
 	
 	rms = np.sqrt(np.mean(np.square(x), axis=axes, keepdims=True) + eps)
 	inv_rms = np.reciprocal(rms)
 	
-	if out is not None:
-		np.multiply(x, inv_rms, out=out)
-		if weight is not None:
-			np.multiply(out, weight, out=out)
-		return out
-	else:
-		x_norm = x * inv_rms
-		if weight is not None:
-			x_norm = x_norm * weight
-		return x_norm
+        if out is not None:
+                np.multiply(x, inv_rms, out=out)
+                if weight is not None:
+                        np.multiply(out, weight, out=out)
+                result = out
+        else:
+                result = x * inv_rms
+                if weight is not None:
+                        result = result * weight
+
+        if return_stats:
+                return result, inv_rms
+        return result
 
 
 def batch_norm(x, running_mean=None, running_var=None, weight=None, bias=None,
