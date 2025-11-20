@@ -213,18 +213,21 @@ class Tensor:
                     input_tensor._grad = grad_value
                 else:
                     backend = input_tensor._backend
-                    if hasattr(input_tensor._grad, "data") and hasattr(grad_value, "data"):
-                        backend.add(
-                            input_tensor._grad.data,
-                            grad_value.data,
-                            out=input_tensor._grad.data,
-                        )
+                    grad_buffer = getattr(input_tensor._grad, "data", input_tensor._grad)
+                    increment = getattr(grad_value, "data", grad_value)
+
+                    if hasattr(backend, "add_"):
+                        backend.add_(grad_buffer, increment)
                     else:
-                        summed = backend.add(
-                            getattr(input_tensor._grad, "data", input_tensor._grad),
-                            getattr(grad_value, "data", grad_value),
+                        backend.add(
+                            grad_buffer,
+                            increment,
+                            out=grad_buffer,
                         )
-                        input_tensor._grad = input_tensor._new_like(summed, requires_grad=False)
+
+                    if not hasattr(input_tensor._grad, "data"):
+                        # ``_grad`` stored raw backend data; keep the updated buffer wrapped
+                        input_tensor._grad = input_tensor._new_like(grad_buffer, requires_grad=False)
 
                 input_tensor._run_post_backward_hooks()
 
