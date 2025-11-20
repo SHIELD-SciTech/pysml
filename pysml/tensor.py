@@ -564,10 +564,10 @@ def _cached_resolve_device(device: str):
     if device.startswith("xpu"):
         try:
             from .xpu import backend as xpu_backend
-        except ImportError as exc:
+        except ImportError:
             raise RuntimeError(
-                "XPU backend requested but dpnp/dpctl are not installed."
-            ) from exc
+                "XPU backend requested but not found. Please install 'dpnp' and 'dpctl'."
+            )
 
         index = _parse_device_index(device)
         active = "xpu" if index is None else f"xpu:{index}"
@@ -575,10 +575,10 @@ def _cached_resolve_device(device: str):
     if device.startswith("cuda"):
         try:
             from .cuda import backend as cuda_backend
-        except ImportError as exc:
+        except ImportError:
             raise RuntimeError(
-                "CUDA backend requested but required dependencies are missing."
-            ) from exc
+                "CUDA backend requested but not found. Please install 'cupy'."
+            )
 
         index = _parse_device_index(device)
         active = "cuda" if index is None else f"cuda:{index}"

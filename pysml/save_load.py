@@ -205,52 +205,19 @@ def export_onnx(model, dummy_input, filepath, opset_version=12, **kwargs):
 
 
 def save_safetensors(model, filepath):
-    """Save ``model`` parameters to ``filepath`` in safetensors format if available.
-
-    Falls back to pickle-based :func:`save_state_dict` when the optional
-    :mod:`safetensors` dependency is missing. Parameters that cannot be
-    converted to NumPy arrays are skipped with a warning.
-    """
-
-    state_dict = model.state_dict() if hasattr(model, "state_dict") else model
-
-    try:
-        from safetensors.numpy import save_file
-    except ImportError:
-        warnings.warn(
-            "safetensors not installed; falling back to pickle-based save_state_dict",
-            RuntimeWarning,
-        )
-        return save_state_dict(model, filepath)
-
-    tensors: Dict[str, np.ndarray] = {}
-    for name, value in state_dict.items():
-        array = _to_numpy(value)
-        if array is None:
-            warnings.warn(
-                f"Skipping parameter '{name}' because it cannot be converted to a NumPy array.",
-                RuntimeWarning,
-            )
-            continue
-        tensors[name] = np.asarray(array)
-
-    save_file(tensors, filepath)
+    warnings.warn(
+        "Safetensors support is currently experimental/missing. "
+        "Falling back to standard pickle checkpointing."
+    )
+    return save_state_dict(model, filepath)
 
 
 def load_safetensors(filepath):
-    """Load tensors from a safetensors file into PySML ``Tensor`` objects."""
-
-    try:
-        from safetensors.numpy import load_file
-    except ImportError as exc:
-        raise RuntimeError(
-            "Install the 'safetensors' package to load safetensors files."
-        ) from exc
-
-    arrays = load_file(filepath)
-    from .tensor import Tensor
-
-    return {name: Tensor(array) for name, array in arrays.items()}
+    warnings.warn(
+        "Safetensors support is currently experimental/missing. "
+        "Falling back to standard pickle loading."
+    )
+    return load(filepath)
 
 
 __all__ = [
