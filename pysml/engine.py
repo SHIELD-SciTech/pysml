@@ -1,9 +1,9 @@
 from pysml.tensor import Tensor
 from pysml.autograd import (
-	Function, is_grad_enabled,
-	backward_add, backward_subtract, backward_multiply, backward_divide,
-	backward_power, backward_matmul, backward_relu, backward_exp,
-	backward_log, backward_tanh, backward_sum, backward_transpose,
+Function, is_grad_enabled,
+backward_add, backward_subtract, backward_multiply, backward_divide,
+backward_power, backward_matmul, backward_relu, backward_exp,
+backward_log, backward_tanh, backward_sum, backward_mean, backward_transpose,
 	backward_reshape, backward_sigmoid, backward_sqrt, backward_sin,
 	backward_cos,
 	# NEW IMPORTS BELOW
@@ -543,7 +543,7 @@ def sum_with_grad(input, axis=None, keepdims=False):
 def mean_with_grad(input, axis=None, keepdims=False):
 	backend = input._backend
 	result_data = backend.mean(input.data, axis=axis, keepdims=keepdims)
-	
+
 	# Wrap in Tensor
 	out = Tensor.__new__(Tensor)
 	out._requires_grad = input._requires_grad
@@ -553,21 +553,23 @@ def mean_with_grad(input, axis=None, keepdims=False):
 	out.device = input.device
 	out.active_device = input.active_device
 	out.data = result_data
-	
+
 	# Build computational graph (mean = sum / n)
 	if is_grad_enabled() and out._requires_grad:
-		# For mean, gradient is 1/n instead of 1
-		n = input.data.size if axis is None else input.data.shape[axis]
+		if axis is None:
+			n = input.data.size
+		else:
+			axes = axis if isinstance(axis, (tuple, list)) else (axis,)
+			n = 1
+			for ax in axes:
+				n *= input.data.shape[ax if ax >= 0 else ax + input.data.ndim]
+
 		out._grad_fn = Function(
-			lambda grad, inp_ref, **kw: backward_sum(
-				type(grad).__new__(type(grad)),  # grad / n
-				inp_ref,
-				**kw
-			) if False else [(inp_ref(), grad)] if inp_ref() else [None],
+			backward_mean,
 			[input],
 			metadata={'axis': axis, 'keepdims': keepdims, 'n': n}
 		)
-	
+
 	return out
 
 
