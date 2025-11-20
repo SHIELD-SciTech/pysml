@@ -25,6 +25,14 @@ ShapeLike = Union[int, Sequence[int]]
 class Tensor:
     """Light-weight multidimensional array supporting autograd."""
 
+    def __new__(cls, *args, **kwargs):
+        instance = super().__new__(cls)
+        instance._post_backward_hooks = []
+        instance._grad_fn = None
+        instance._grad = None
+        instance._requires_grad = False
+        return instance
+
     __slots__ = (
         "data",
         "_requires_grad",

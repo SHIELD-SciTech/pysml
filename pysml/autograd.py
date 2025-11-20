@@ -5,7 +5,7 @@ from .tensor import Tensor
 
 
 class Function:
-        __slots__ = ('inputs', 'backward_fn', 'metadata', 'next_functions')
+        __slots__ = ('inputs', 'backward_fn', 'metadata', 'next_functions', '_saved_inputs')
 
         def __init__(self, backward_fn: Callable, inputs: List, metadata: dict = None):
                 # Store weak references to inputs to avoid reference cycles
@@ -15,7 +15,9 @@ class Function:
                 self.next_functions = []  # For graph traversal
 
         def apply_backward(self, grad_output):
-                return self.backward_fn(grad_output, *self.inputs, **self.metadata)
+                result = self.backward_fn(grad_output, *self.inputs, **self.metadata)
+                self._saved_inputs = None
+                return result
 
 
 def register_post_backward_hook(tensor: Tensor, hook: Callable[[Tensor], None]):
