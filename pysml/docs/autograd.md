@@ -44,6 +44,12 @@ PySML records computation graphs lazily, mirroring PyTorch semantics. The follow
 - **Used in scripts**: Not referenced directly, but any custom operation you add for RWKV/Transformer research will import these patterns to stay differentiable.【F:pysml/engine.py†L121-L220】
 - **Equivalent APIs**: The backward static methods you implement in `torch.autograd.Function` subclasses; TensorFlow’s gradient registration callbacks.
 
+### Reduction-aware gradients
+- **Reference**: Sum/mean backward helpers expand or reduce gradients based on the original `axis`/`keepdims` arguments and broadcasting semantics.【F:pysml/autograd.py†L66-L113】
+- **What it does**: Prevents over-accumulation when axes are squeezed or operands are broadcast (e.g., `(batch, hidden)` × `(1, hidden)` products). New regression tests capture these scenarios directly.【F:tests/test_autograd_ops.py†L1-L41】
+- **Used in scripts**: The autograd reduction demo runs through the same cases on CPU/GPU/XPU so you can spot backend discrepancies early.【F:pysml/examples/autograd_reduction.py†L1-L46】
+- **Equivalent APIs**: Mirrors PyTorch’s reduction gradient rules where summed dimensions receive uniform gradients and broadcasted inputs are reduced back to their original shapes.
+
 ## Extending the Engine
 
 ### Step-by-step recipe

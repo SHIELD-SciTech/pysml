@@ -1,40 +1,42 @@
 from pysml.tensor import Tensor
 from pysml.autograd import (
-	Function, is_grad_enabled,
-	backward_add, backward_subtract, backward_multiply, backward_divide,
-	backward_power, backward_matmul, backward_relu, backward_exp,
-	backward_log, backward_tanh, backward_sum, backward_transpose,
-	backward_reshape, backward_sigmoid, backward_sqrt, backward_sin,
-	backward_cos,
-	# NEW IMPORTS BELOW
-	backward_softmax, backward_log_softmax, backward_gelu, backward_silu,
-	backward_layer_norm, backward_rms_norm, backward_batch_norm, backward_group_norm,
-	backward_dropout, backward_embedding,
-	backward_permute, backward_unsqueeze, backward_mean,
+Function, is_grad_enabled,
+backward_add, backward_subtract, backward_multiply, backward_divide,
+        backward_power, backward_matmul, backward_relu, backward_exp,
+        backward_log, backward_tanh, backward_sum, backward_mean, backward_transpose,
+        backward_reshape, backward_sigmoid, backward_sqrt, backward_sin,
+        backward_cos,
+        # NEW IMPORTS BELOW
+        backward_softmax, backward_log_softmax, backward_gelu, backward_silu,
+        backward_layer_norm, backward_rms_norm, backward_batch_norm, backward_group_norm,
+        backward_dropout, backward_embedding,
+        backward_permute, backward_unsqueeze, backward_mean,
         backward_abs, backward_clip, backward_where,
         backward_maximum, backward_minimum,
+        backward_max_reduce,
         backward_split,
 )
+import builtins
 import gc
 
 backend_priority = ["cpu", "xpu", "cuda"]
 
 def _requires_grad(obj):
-	"""Safely check if an object requires gradients."""
-	return getattr(obj, '_requires_grad', False) if obj is not None else False
+        """Safely check if an object requires gradients."""
+        return getattr(obj, '_requires_grad', False) if obj is not None else False
 
 
 def _backend(*tensors):
-	backend = tensors[0]._backend
-	backend_index = backend_priority.index(backend.BACKEND_NAME)
-	for tensor in tensors:
-		if backend_priority.index(tensor._backend.BACKEND_NAME) > backend_index:
-			backend = tensor._backend
-			backend_index = backend_priority.index(backend.BACKEND_NAME)
-		else:
-			if backend_index == 2:
-				break
-	return backend
+        backend = tensors[0]._backend
+        backend_index = backend_priority.index(backend.BACKEND_NAME)
+        for tensor in tensors:
+                if backend_priority.index(tensor._backend.BACKEND_NAME) > backend_index:
+                        backend = tensor._backend
+                        backend_index = backend_priority.index(backend.BACKEND_NAME)
+                else:
+                        if backend_index == 2:
+                                break
+        return backend
 
 
 ENSURE_BACKEND = False
@@ -45,202 +47,202 @@ ENSURE_BACKEND = False
 # ============================================================================
 
 def add(input, other, alpha=1, out=None):
-	backend = input._backend
-	if ENSURE_BACKEND and hasattr(other, '_backend'):
-		backend = _backend(input, other)
-	
-	other_data = other.data if hasattr(other, 'data') else other
-	
-	# Handle alpha scaling
-	if alpha != 1:
-		other_data = backend.multiply(other_data, alpha)
-	
-	if out is None:
-		result_data = backend.add(input.data, other_data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or _requires_grad(other)
-		out._grad = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-		
-		# Build computational graph if needed
-		if is_grad_enabled() and out._requires_grad:
-			out._grad_fn = Function(
-				backward_add,
-				[input, other if hasattr(other, '_requires_grad') else None],
-				metadata={'alpha': alpha}
-			)
-	else:
-		# In-place operation - no gradient tracking
-		backend.add(input.data, other_data, out=out.data)
-	
-	return out
+        backend = input._backend
+        if ENSURE_BACKEND and hasattr(other, '_backend'):
+                backend = _backend(input, other)
+        
+        other_data = other.data if hasattr(other, 'data') else other
+        
+        # Handle alpha scaling
+        if alpha != 1:
+                other_data = backend.multiply(other_data, alpha)
+        
+        if out is None:
+                result_data = backend.add(input.data, other_data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad or _requires_grad(other)
+                out._grad = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+                
+                # Build computational graph if needed
+                if is_grad_enabled() and out._requires_grad:
+                        out._grad_fn = Function(
+                                backward_add,
+                                [input, other if hasattr(other, '_requires_grad') else None],
+                                metadata={'alpha': alpha}
+                        )
+        else:
+                # In-place operation - no gradient tracking
+                backend.add(input.data, other_data, out=out.data)
+        
+        return out
 
 
 def subtract(input, other, out=None):
-	backend = input._backend
-	if ENSURE_BACKEND and hasattr(other, '_backend'):
-		backend = _backend(input, other)
-	
-	other_data = other.data if hasattr(other, 'data') else other
-	
-	if out is None:
-		result_data = backend.subtract(input.data, other_data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or _requires_grad(other)
-		out._grad = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-		
-		# Build computational graph
-		if is_grad_enabled() and out._requires_grad:
-			out._grad_fn = Function(
-				backward_subtract,
-				[input, other if hasattr(other, '_requires_grad') else None],
-				metadata={}
-			)
-	else:
-		backend.subtract(input.data, other_data, out=out.data)
-	
-	return out
+        backend = input._backend
+        if ENSURE_BACKEND and hasattr(other, '_backend'):
+                backend = _backend(input, other)
+        
+        other_data = other.data if hasattr(other, 'data') else other
+        
+        if out is None:
+                result_data = backend.subtract(input.data, other_data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad or _requires_grad(other)
+                out._grad = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+                
+                # Build computational graph
+                if is_grad_enabled() and out._requires_grad:
+                        out._grad_fn = Function(
+                                backward_subtract,
+                                [input, other if hasattr(other, '_requires_grad') else None],
+                                metadata={}
+                        )
+        else:
+                backend.subtract(input.data, other_data, out=out.data)
+        
+        return out
 
 
 def multiply(input, other, out=None):
-	backend = input._backend
-	if ENSURE_BACKEND and hasattr(other, '_backend'):
-		backend = _backend(input, other)
-	
-	other_data = other.data if hasattr(other, 'data') else other
-	is_scalar = not hasattr(other, 'data')
-	
-	if out is None:
-		result_data = backend.multiply(input.data, other_data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or _requires_grad(other)
-		out._grad = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-		
-		# Build computational graph
-		if is_grad_enabled() and out._requires_grad:
-			metadata = {}
-			if is_scalar:
-				metadata['other_scalar'] = other_data
-			
-			out._grad_fn = Function(
-				backward_multiply,
-				[input, other if hasattr(other, '_requires_grad') else None],
-				metadata=metadata
-			)
-	else:
-		backend.multiply(input.data, other_data, out=out.data)
-	
-	return out
+        backend = input._backend
+        if ENSURE_BACKEND and hasattr(other, '_backend'):
+                backend = _backend(input, other)
+        
+        other_data = other.data if hasattr(other, 'data') else other
+        is_scalar = not hasattr(other, 'data')
+        
+        if out is None:
+                result_data = backend.multiply(input.data, other_data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad or _requires_grad(other)
+                out._grad = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+                
+                # Build computational graph
+                if is_grad_enabled() and out._requires_grad:
+                        metadata = {}
+                        if is_scalar:
+                                metadata['other_scalar'] = other_data
+                        
+                        out._grad_fn = Function(
+                                backward_multiply,
+                                [input, other if hasattr(other, '_requires_grad') else None],
+                                metadata=metadata
+                        )
+        else:
+                backend.multiply(input.data, other_data, out=out.data)
+        
+        return out
 
 
 def divide(input, other, out=None):
-	backend = input._backend
-	if ENSURE_BACKEND and hasattr(other, '_backend'):
-		backend = _backend(input, other)
-	
-	other_data = other.data if hasattr(other, 'data') else other
-	is_scalar = not hasattr(other, 'data')
-	
-	if out is None:
-		result_data = backend.divide(input.data, other_data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or _requires_grad(other)
-		out._grad = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-		
-		# Build computational graph
-		if is_grad_enabled() and out._requires_grad:
-			metadata = {}
-			if is_scalar:
-				metadata['other_scalar'] = other_data
-			
-			out._grad_fn = Function(
-				backward_divide,
-				[input, other if hasattr(other, '_requires_grad') else None],
-				metadata=metadata
-			)
-	else:
-		backend.divide(input.data, other_data, out=out.data)
-	
-	return out
+        backend = input._backend
+        if ENSURE_BACKEND and hasattr(other, '_backend'):
+                backend = _backend(input, other)
+        
+        other_data = other.data if hasattr(other, 'data') else other
+        is_scalar = not hasattr(other, 'data')
+        
+        if out is None:
+                result_data = backend.divide(input.data, other_data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad or _requires_grad(other)
+                out._grad = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+                
+                # Build computational graph
+                if is_grad_enabled() and out._requires_grad:
+                        metadata = {}
+                        if is_scalar:
+                                metadata['other_scalar'] = other_data
+                        
+                        out._grad_fn = Function(
+                                backward_divide,
+                                [input, other if hasattr(other, '_requires_grad') else None],
+                                metadata=metadata
+                        )
+        else:
+                backend.divide(input.data, other_data, out=out.data)
+        
+        return out
 
 
 def power(input, exponent, out=None):
-	backend = input._backend
-	if ENSURE_BACKEND and hasattr(exponent, '_backend'):
-		backend = _backend(input, exponent)
-	
-	exponent_data = exponent.data if hasattr(exponent, 'data') else exponent
-	exponent_value = float(exponent_data) if not hasattr(exponent_data, '__len__') else exponent_data
-	
-	if out is None:
-		result_data = backend.power(input.data, exponent_data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-		
-		# Build computational graph
-		if is_grad_enabled() and out._requires_grad:
-			out._grad_fn = Function(
-				backward_power,
-				[input],
-				metadata={'exponent': exponent_value}
-			)
-	else:
-		backend.power(input.data, exponent_data, out=out.data)
-	
-	return out
+        backend = input._backend
+        if ENSURE_BACKEND and hasattr(exponent, '_backend'):
+                backend = _backend(input, exponent)
+        
+        exponent_data = exponent.data if hasattr(exponent, 'data') else exponent
+        exponent_value = float(exponent_data) if not hasattr(exponent_data, '__len__') else exponent_data
+        
+        if out is None:
+                result_data = backend.power(input.data, exponent_data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+                
+                # Build computational graph
+                if is_grad_enabled() and out._requires_grad:
+                        out._grad_fn = Function(
+                                backward_power,
+                                [input],
+                                metadata={'exponent': exponent_value}
+                        )
+        else:
+                backend.power(input.data, exponent_data, out=out.data)
+        
+        return out
 
 
 def negative(input, out=None):
-	backend = input._backend
-	
-	if out is None:
-		result_data = backend.negative(input.data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-		
-		# Build computational graph
-		if is_grad_enabled() and out._requires_grad:
-			# negative is just multiply by -1
-			out._grad_fn = Function(
-				backward_multiply,
-				[input, None],
-				metadata={'other_scalar': -1.0}
-			)
-	else:
-		backend.negative(input.data, out=out.data)
-	
-	return out
+        backend = input._backend
+        
+        if out is None:
+                result_data = backend.negative(input.data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+                
+                # Build computational graph
+                if is_grad_enabled() and out._requires_grad:
+                        # negative is just multiply by -1
+                        out._grad_fn = Function(
+                                backward_multiply,
+                                [input, None],
+                                metadata={'other_scalar': -1.0}
+                        )
+        else:
+                backend.negative(input.data, out=out.data)
+        
+        return out
 
 
 # ============================================================================
@@ -248,36 +250,36 @@ def negative(input, out=None):
 # ============================================================================
 
 def matmul(input, other, out=None):
-	backend = input._backend
-	if ENSURE_BACKEND and hasattr(other, '_backend'):
-		backend = _backend(input, other)
-	
-	if out is None:
-		result_data = backend.matmul(input.data, other.data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or _requires_grad(other)
-		out._grad = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-		
-		# Build computational graph
-		if is_grad_enabled() and out._requires_grad:
-			out._grad_fn = Function(
-				backward_matmul,
-				[input, other],
-				metadata={}
-			)
-	else:
-		try:
-			backend.matmul(input.data, other.data, out=out.data)
-		except:
-			result = backend.matmul(input.data, other.data)
-			backend.copyto(out.data, result)
-	
-	return out
+        backend = input._backend
+        if ENSURE_BACKEND and hasattr(other, '_backend'):
+                backend = _backend(input, other)
+        
+        if out is None:
+                result_data = backend.matmul(input.data, other.data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad or _requires_grad(other)
+                out._grad = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+                
+                # Build computational graph
+                if is_grad_enabled() and out._requires_grad:
+                        out._grad_fn = Function(
+                                backward_matmul,
+                                [input, other],
+                                metadata={}
+                        )
+        else:
+                try:
+                        backend.matmul(input.data, other.data, out=out.data)
+                except:
+                        result = backend.matmul(input.data, other.data)
+                        backend.copyto(out.data, result)
+        
+        return out
 
 
 # ============================================================================
@@ -285,230 +287,230 @@ def matmul(input, other, out=None):
 # ============================================================================
 
 def relu(input, out=None):
-	backend = input._backend
-	
-	if out is None:
-		result_data = backend.maximum(input.data, 0)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-		
-		# Build computational graph
-		if is_grad_enabled() and out._requires_grad:
-			out._grad_fn = Function(
-				backward_relu,
-				[input],
-				metadata={}
-			)
-	else:
-		backend.maximum(input.data, 0, out=out.data)
-	
-	return out
+        backend = input._backend
+        
+        if out is None:
+                result_data = backend.maximum(input.data, 0)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+                
+                # Build computational graph
+                if is_grad_enabled() and out._requires_grad:
+                        out._grad_fn = Function(
+                                backward_relu,
+                                [input],
+                                metadata={}
+                        )
+        else:
+                backend.maximum(input.data, 0, out=out.data)
+        
+        return out
 
 
 def exp(input, out=None):
-	backend = input._backend
-	
-	if out is None:
-		result_data = backend.exp(input.data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-		
-		# Build computational graph
-		if is_grad_enabled() and out._requires_grad:
-			out._grad_fn = Function(
-				backward_exp,
-				[input],
-				metadata={}
-			)
-	else:
-		backend.exp(input.data, out=out.data)
-	
-	return out
+        backend = input._backend
+        
+        if out is None:
+                result_data = backend.exp(input.data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+                
+                # Build computational graph
+                if is_grad_enabled() and out._requires_grad:
+                        out._grad_fn = Function(
+                                backward_exp,
+                                [input],
+                                metadata={}
+                        )
+        else:
+                backend.exp(input.data, out=out.data)
+        
+        return out
 
 
 def log(input, out=None):
-	backend = input._backend
-	
-	if out is None:
-		result_data = backend.log(input.data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-		
-		# Build computational graph
-		if is_grad_enabled() and out._requires_grad:
-			out._grad_fn = Function(
-				backward_log,
-				[input],
-				metadata={}
-			)
-	else:
-		backend.log(input.data, out=out.data)
-	
-	return out
+        backend = input._backend
+        
+        if out is None:
+                result_data = backend.log(input.data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+                
+                # Build computational graph
+                if is_grad_enabled() and out._requires_grad:
+                        out._grad_fn = Function(
+                                backward_log,
+                                [input],
+                                metadata={}
+                        )
+        else:
+                backend.log(input.data, out=out.data)
+        
+        return out
 
 
 def tanh(input, out=None):
-	backend = input._backend
-	
-	if out is None:
-		result_data = backend.tanh(input.data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-		
-		# Build computational graph
-		if is_grad_enabled() and out._requires_grad:
-			out._grad_fn = Function(
-				backward_tanh,
-				[input],
-				metadata={}
-			)
-	else:
-		backend.tanh(input.data, out=out.data)
-	
-	return out
+        backend = input._backend
+        
+        if out is None:
+                result_data = backend.tanh(input.data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+                
+                # Build computational graph
+                if is_grad_enabled() and out._requires_grad:
+                        out._grad_fn = Function(
+                                backward_tanh,
+                                [input],
+                                metadata={}
+                        )
+        else:
+                backend.tanh(input.data, out=out.data)
+        
+        return out
 
 
 def sigmoid(input, out=None):
-	backend = input._backend
-	
-	if out is None:
-		# sigmoid(x) = 1 / (1 + exp(-x))
-		result_data = backend.reciprocal(
-			backend.add(1.0, backend.exp(backend.negative(input.data)))
-		)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-		
-		# Build computational graph
-		if is_grad_enabled() and out._requires_grad:
-			out._grad_fn = Function(
-				backward_sigmoid,
-				[input],
-				metadata={}
-			)
-	else:
-		temp = backend.reciprocal(
-			backend.add(1.0, backend.exp(backend.negative(input.data)))
-		)
-		backend.copyto(out.data, temp)
-	
-	return out
+        backend = input._backend
+        
+        if out is None:
+                # sigmoid(x) = 1 / (1 + exp(-x))
+                result_data = backend.reciprocal(
+                        backend.add(1.0, backend.exp(backend.negative(input.data)))
+                )
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+                
+                # Build computational graph
+                if is_grad_enabled() and out._requires_grad:
+                        out._grad_fn = Function(
+                                backward_sigmoid,
+                                [input],
+                                metadata={}
+                        )
+        else:
+                temp = backend.reciprocal(
+                        backend.add(1.0, backend.exp(backend.negative(input.data)))
+                )
+                backend.copyto(out.data, temp)
+        
+        return out
 
 
 def sqrt(input, out=None):
-	backend = input._backend
-	
-	if out is None:
-		result_data = backend.sqrt(input.data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-		
-		# Build computational graph
-		if is_grad_enabled() and out._requires_grad:
-			out._grad_fn = Function(
-				backward_sqrt,
-				[input],
-				metadata={}
-			)
-	else:
-		backend.sqrt(input.data, out=out.data)
-	
-	return out
+        backend = input._backend
+        
+        if out is None:
+                result_data = backend.sqrt(input.data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+                
+                # Build computational graph
+                if is_grad_enabled() and out._requires_grad:
+                        out._grad_fn = Function(
+                                backward_sqrt,
+                                [input],
+                                metadata={}
+                        )
+        else:
+                backend.sqrt(input.data, out=out.data)
+        
+        return out
 
 
 def square(input, out=None):
-	# Just use power with exponent=2
-	return power(input, 2, out=out)
+        # Just use power with exponent=2
+        return power(input, 2, out=out)
 
 
 def sin(input, out=None):
-	backend = input._backend
-	
-	if out is None:
-		result_data = backend.sin(input.data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-		
-		# Build computational graph
-		if is_grad_enabled() and out._requires_grad:
-			out._grad_fn = Function(
-				backward_sin,
-				[input],
-				metadata={}
-			)
-	else:
-		backend.sin(input.data, out=out.data)
-	
-	return out
+        backend = input._backend
+        
+        if out is None:
+                result_data = backend.sin(input.data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+                
+                # Build computational graph
+                if is_grad_enabled() and out._requires_grad:
+                        out._grad_fn = Function(
+                                backward_sin,
+                                [input],
+                                metadata={}
+                        )
+        else:
+                backend.sin(input.data, out=out.data)
+        
+        return out
 
 
 def cos(input, out=None):
-	backend = input._backend
-	
-	if out is None:
-		result_data = backend.cos(input.data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-		
-		# Build computational graph
-		if is_grad_enabled() and out._requires_grad:
-			out._grad_fn = Function(
-				backward_cos,
-				[input],
-				metadata={}
-			)
-	else:
-		backend.cos(input.data, out=out.data)
-	
-	return out
+        backend = input._backend
+        
+        if out is None:
+                result_data = backend.cos(input.data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+                
+                # Build computational graph
+                if is_grad_enabled() and out._requires_grad:
+                        out._grad_fn = Function(
+                                backward_cos,
+                                [input],
+                                metadata={}
+                        )
+        else:
+                backend.cos(input.data, out=out.data)
+        
+        return out
 
 
 # ============================================================================
@@ -516,75 +518,73 @@ def cos(input, out=None):
 # ============================================================================
 
 def sum_with_grad(input, axis=None, keepdims=False):
-	backend = input._backend
-	result_data = backend.sum(input.data, axis=axis, keepdims=keepdims)
-	
-	# Wrap in Tensor
-	out = Tensor.__new__(Tensor)
-	out._requires_grad = input._requires_grad
-	out._grad = None
-	out._dtype = input._dtype
-	out._backend = backend
-	out.device = input.device
-	out.active_device = input.active_device
-	out.data = result_data
-	
-	# Build computational graph
-	if is_grad_enabled() and out._requires_grad:
-		out._grad_fn = Function(
-			backward_sum,
-			[input],
-			metadata={'axis': axis, 'keepdims': keepdims}
-		)
-	
-	return out
+        backend = input._backend
+        result_data = backend.sum(input.data, axis=axis, keepdims=keepdims)
+        
+        # Wrap in Tensor
+        out = Tensor.__new__(Tensor)
+        out._requires_grad = input._requires_grad
+        out._grad = None
+        out._dtype = input._dtype
+        out._backend = backend
+        out.device = input.device
+        out.active_device = input.active_device
+        out.data = result_data
+        
+        # Build computational graph
+        if is_grad_enabled() and out._requires_grad:
+                out._grad_fn = Function(
+                        backward_sum,
+                        [input],
+                        metadata={'axis': axis, 'keepdims': keepdims}
+                )
+        
+        return out
 
 
 def mean_with_grad(input, axis=None, keepdims=False):
-	backend = input._backend
-	result_data = backend.mean(input.data, axis=axis, keepdims=keepdims)
-	
-	# Wrap in Tensor
-	out = Tensor.__new__(Tensor)
-	out._requires_grad = input._requires_grad
-	out._grad = None
-	out._dtype = input._dtype
-	out._backend = backend
-	out.device = input.device
-	out.active_device = input.active_device
-	out.data = result_data
-	
-	# Build computational graph (mean = sum / n)
-	if is_grad_enabled() and out._requires_grad:
-		# For mean, gradient is 1/n instead of 1
-		n = input.data.size if axis is None else input.data.shape[axis]
-		out._grad_fn = Function(
-			lambda grad, inp_ref, **kw: backward_sum(
-				type(grad).__new__(type(grad)),  # grad / n
-				inp_ref,
-				**kw
-			) if False else [(inp_ref(), grad)] if inp_ref() else [None],
-			[input],
-			metadata={'axis': axis, 'keepdims': keepdims, 'n': n}
-		)
-	
-	return out
+        backend = input._backend
+        result_data = backend.mean(input.data, axis=axis, keepdims=keepdims)
+
+        # Wrap in Tensor
+        out = Tensor.__new__(Tensor)
+        out._requires_grad = input._requires_grad
+        out._grad = None
+        out._dtype = input._dtype
+        out._backend = backend
+        out.device = input.device
+        out.active_device = input.active_device
+        out.data = result_data
+
+        # Build computational graph (mean = sum / n)
+        if is_grad_enabled() and out._requires_grad:
+                if axis is None:
+                        n = input.data.size
+                else:
+                        axes = axis if isinstance(axis, (tuple, list)) else (axis,)
+                        n = 1
+                        for ax in axes:
+                                n *= input.data.shape[ax if ax >= 0 else ax + input.data.ndim]
+
+                out._grad_fn = Function(
+                        backward_mean,
+                        [input],
+                        metadata={'axis': axis, 'keepdims': keepdims, 'n': n}
+                )
+
+        return out
 
 
 # ============================================================================
-# Non-differentiable operations (return raw values, not tensors)
+# Differentiable reduction wrappers (alias to *_with_grad for clarity)
 # ============================================================================
 
 def sum(input, axis=None, keepdims=False):
-	backend = input._backend
-	result = backend.sum(input.data, axis=axis, keepdims=keepdims)
-	return result
+        return sum_with_grad(input, axis=axis, keepdims=keepdims)
 
 
 def mean(input, axis=None, keepdims=False):
-	backend = input._backend
-	result = backend.mean(input.data, axis=axis, keepdims=keepdims)
-	return result
+        return mean_with_grad(input, axis=axis, keepdims=keepdims)
 
 
 def max(input, axis=None, keepdims=False):
@@ -668,184 +668,184 @@ def min(input, axis=None, keepdims=False):
 # ============================================================================
 
 def transpose(input, axes=None):
-	backend = input._backend
-	if axes is None:
-		result_data = backend.transpose(input.data)
-	else:
-		result_data = backend.transpose(input.data, axes)
-	
-	out = Tensor.__new__(Tensor)
-	out._requires_grad = input._requires_grad
-	out._grad = None
-	out._dtype = input._dtype
-	out._backend = backend
-	out.device = input.device
-	out.active_device = input.active_device
-	out.data = result_data
-	
-	# Build computational graph
-	if is_grad_enabled() and out._requires_grad:
-		out._grad_fn = Function(
-			backward_transpose,
-			[input],
-			metadata={'axes': axes}
-		)
-	
-	return out
+        backend = input._backend
+        if axes is None:
+                result_data = backend.transpose(input.data)
+        else:
+                result_data = backend.transpose(input.data, axes)
+        
+        out = Tensor.__new__(Tensor)
+        out._requires_grad = input._requires_grad
+        out._grad = None
+        out._dtype = input._dtype
+        out._backend = backend
+        out.device = input.device
+        out.active_device = input.active_device
+        out.data = result_data
+        
+        # Build computational graph
+        if is_grad_enabled() and out._requires_grad:
+                out._grad_fn = Function(
+                        backward_transpose,
+                        [input],
+                        metadata={'axes': axes}
+                )
+        
+        return out
 
 
 def reshape(input, shape):
-	backend = input._backend
-	result_data = backend.reshape(input.data, shape)
-	
-	out = Tensor.__new__(Tensor)
-	out._requires_grad = input._requires_grad
-	out._grad = None
-	out._dtype = input._dtype
-	out._backend = backend
-	out.device = input.device
-	out.active_device = input.active_device
-	out.data = result_data
-	
-	# Build computational graph
-	if is_grad_enabled() and out._requires_grad:
-		out._grad_fn = Function(
-			backward_reshape,
-			[input],
-			metadata={'original_shape': input.shape}
-		)
-	
-	return out
+        backend = input._backend
+        result_data = backend.reshape(input.data, shape)
+        
+        out = Tensor.__new__(Tensor)
+        out._requires_grad = input._requires_grad
+        out._grad = None
+        out._dtype = input._dtype
+        out._backend = backend
+        out.device = input.device
+        out.active_device = input.active_device
+        out.data = result_data
+        
+        # Build computational graph
+        if is_grad_enabled() and out._requires_grad:
+                out._grad_fn = Function(
+                        backward_reshape,
+                        [input],
+                        metadata={'original_shape': input.shape}
+                )
+        
+        return out
 
 
 # Import remaining operations from original engine (without autograd for now)
 def positive(input, out=None):
-	backend = input._backend
-	if out is None:
-		result_data = backend.positive(input.data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._grad_fn = None  # Gradient is just passed through
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-	else:
-		backend.positive(input.data, out=out.data)
-	return out
+        backend = input._backend
+        if out is None:
+                result_data = backend.positive(input.data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._grad_fn = None  # Gradient is just passed through
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+        else:
+                backend.positive(input.data, out=out.data)
+        return out
 
 
 def abs(input, out=None):
-	backend = input._backend
-	if out is None:
-		result_data = backend.abs(input.data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._grad_fn = None  # Requires sign tracking for proper backward
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-	else:
-		backend.abs(input.data, out=out.data)
-	return out
+        backend = input._backend
+        if out is None:
+                result_data = backend.abs(input.data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._grad_fn = None  # Requires sign tracking for proper backward
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+        else:
+                backend.abs(input.data, out=out.data)
+        return out
 
 
 absolute = abs  # Alias
 
 
 def floor_divide(input, other, out=None):
-	backend = input._backend
-	if ENSURE_BACKEND and hasattr(other, '_backend'):
-		backend = _backend(input, other)
-	
-	other_data = other.data if hasattr(other, 'data') else other
-	
-	if out is None:
-		result_data = backend.floor_divide(input.data, other_data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = False  # Not differentiable
-		out._grad = None
-		out._grad_fn = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-	else:
-		backend.floor_divide(input.data, other_data, out=out.data)
-	
-	return out
+        backend = input._backend
+        if ENSURE_BACKEND and hasattr(other, '_backend'):
+                backend = _backend(input, other)
+        
+        other_data = other.data if hasattr(other, 'data') else other
+        
+        if out is None:
+                result_data = backend.floor_divide(input.data, other_data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = False  # Not differentiable
+                out._grad = None
+                out._grad_fn = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+        else:
+                backend.floor_divide(input.data, other_data, out=out.data)
+        
+        return out
 
 
 def remainder(input, other, out=None):
-	backend = input._backend
-	if ENSURE_BACKEND and hasattr(other, '_backend'):
-		backend = _backend(input, other)
-	
-	other_data = other.data if hasattr(other, 'data') else other
-	
-	if out is None:
-		result_data = backend.remainder(input.data, other_data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = False  # Not differentiable
-		out._grad = None
-		out._grad_fn = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-	else:
-		backend.remainder(input.data, other_data, out=out.data)
-	
-	return out
+        backend = input._backend
+        if ENSURE_BACKEND and hasattr(other, '_backend'):
+                backend = _backend(input, other)
+        
+        other_data = other.data if hasattr(other, 'data') else other
+        
+        if out is None:
+                result_data = backend.remainder(input.data, other_data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = False  # Not differentiable
+                out._grad = None
+                out._grad_fn = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+        else:
+                backend.remainder(input.data, other_data, out=out.data)
+        
+        return out
 
 
 def mod(input, other, out=None):
-	backend = input._backend
-	if ENSURE_BACKEND and hasattr(other, '_backend'):
-		backend = _backend(input, other)
-	
-	other_data = other.data if hasattr(other, 'data') else other
-	
-	if out is None:
-		result_data = backend.mod(input.data, other_data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = False  # Not differentiable
-		out._grad = None
-		out._grad_fn = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-	else:
-		backend.mod(input.data, other_data, out=out.data)
-	
-	return out
+        backend = input._backend
+        if ENSURE_BACKEND and hasattr(other, '_backend'):
+                backend = _backend(input, other)
+        
+        other_data = other.data if hasattr(other, 'data') else other
+        
+        if out is None:
+                result_data = backend.mod(input.data, other_data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = False  # Not differentiable
+                out._grad = None
+                out._grad_fn = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+        else:
+                backend.mod(input.data, other_data, out=out.data)
+        
+        return out
 
 
 def sign(input, out=None):
-	backend = input._backend
-	if out is None:
-		result_data = backend.sign(input.data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = False  # Not differentiable at 0
-		out._grad = None
-		out._grad_fn = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-	else:
-		backend.sign(input.data, out=out.data)
-	return out
+        backend = input._backend
+        if out is None:
+                result_data = backend.sign(input.data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = False  # Not differentiable at 0
+                out._grad = None
+                out._grad_fn = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+        else:
+                backend.sign(input.data, out=out.data)
+        return out
 
 
 # ============================================================================
@@ -853,147 +853,147 @@ def sign(input, out=None):
 # ============================================================================
 
 def log10(input, out=None):
-	backend = input._backend
-	if out is None:
-		result_data = backend.log10(input.data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._grad_fn = None  # Can be added: grad = grad_out / (x * ln(10))
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-	else:
-		backend.log10(input.data, out=out.data)
-	return out
+        backend = input._backend
+        if out is None:
+                result_data = backend.log10(input.data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._grad_fn = None  # Can be added: grad = grad_out / (x * ln(10))
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+        else:
+                backend.log10(input.data, out=out.data)
+        return out
 
 
 def log2(input, out=None):
-	backend = input._backend
-	if out is None:
-		result_data = backend.log2(input.data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._grad_fn = None  # Can be added: grad = grad_out / (x * ln(2))
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-	else:
-		backend.log2(input.data, out=out.data)
-	return out
+        backend = input._backend
+        if out is None:
+                result_data = backend.log2(input.data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._grad_fn = None  # Can be added: grad = grad_out / (x * ln(2))
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+        else:
+                backend.log2(input.data, out=out.data)
+        return out
 
 
 def tan(input, out=None):
-	backend = input._backend
-	if out is None:
-		result_data = backend.tan(input.data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._grad_fn = None  # Can be added
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-	else:
-		backend.tan(input.data, out=out.data)
-	return out
+        backend = input._backend
+        if out is None:
+                result_data = backend.tan(input.data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._grad_fn = None  # Can be added
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+        else:
+                backend.tan(input.data, out=out.data)
+        return out
 
 
 def arcsin(input, out=None):
-	backend = input._backend
-	if out is None:
-		result_data = backend.arcsin(input.data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._grad_fn = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-	else:
-		backend.arcsin(input.data, out=out.data)
-	return out
+        backend = input._backend
+        if out is None:
+                result_data = backend.arcsin(input.data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._grad_fn = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+        else:
+                backend.arcsin(input.data, out=out.data)
+        return out
 
 
 def arccos(input, out=None):
-	backend = input._backend
-	if out is None:
-		result_data = backend.arccos(input.data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._grad_fn = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-	else:
-		backend.arccos(input.data, out=out.data)
-	return out
+        backend = input._backend
+        if out is None:
+                result_data = backend.arccos(input.data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._grad_fn = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+        else:
+                backend.arccos(input.data, out=out.data)
+        return out
 
 
 def arctan(input, out=None):
-	backend = input._backend
-	if out is None:
-		result_data = backend.arctan(input.data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._grad_fn = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-	else:
-		backend.arctan(input.data, out=out.data)
-	return out
+        backend = input._backend
+        if out is None:
+                result_data = backend.arctan(input.data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._grad_fn = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+        else:
+                backend.arctan(input.data, out=out.data)
+        return out
 
 
 def sinh(input, out=None):
-	backend = input._backend
-	if out is None:
-		result_data = backend.sinh(input.data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._grad_fn = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-	else:
-		backend.sinh(input.data, out=out.data)
-	return out
+        backend = input._backend
+        if out is None:
+                result_data = backend.sinh(input.data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._grad_fn = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+        else:
+                backend.sinh(input.data, out=out.data)
+        return out
 
 
 def cosh(input, out=None):
-	backend = input._backend
-	if out is None:
-		result_data = backend.cosh(input.data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._grad_fn = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-	else:
-		backend.cosh(input.data, out=out.data)
-	return out
+        backend = input._backend
+        if out is None:
+                result_data = backend.cosh(input.data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._grad_fn = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+        else:
+                backend.cosh(input.data, out=out.data)
+        return out
 
 
 # ============================================================================
@@ -1001,78 +1001,78 @@ def cosh(input, out=None):
 # ============================================================================
 
 def squeeze(input, axis=None):
-	backend = input._backend
-	if axis is None:
-		result_data = backend.squeeze(input.data)
-	else:
-		result_data = backend.squeeze(input.data, axis)
-	
-	out = Tensor.__new__(Tensor)
-	out._requires_grad = input._requires_grad
-	out._grad = None
-	out._grad_fn = None  # View operation - can add grad
-	out._dtype = input._dtype
-	out._backend = backend
-	out.device = input.device
-	out.active_device = input.active_device
-	out.data = result_data
-	return out
+        backend = input._backend
+        if axis is None:
+                result_data = backend.squeeze(input.data)
+        else:
+                result_data = backend.squeeze(input.data, axis)
+        
+        out = Tensor.__new__(Tensor)
+        out._requires_grad = input._requires_grad
+        out._grad = None
+        out._grad_fn = None  # View operation - can add grad
+        out._dtype = input._dtype
+        out._backend = backend
+        out.device = input.device
+        out.active_device = input.active_device
+        out.data = result_data
+        return out
 
 
 def expand_dims(input, axis):
-	backend = input._backend
-	result_data = backend.expand_dims(input.data, axis)
-	
-	out = Tensor.__new__(Tensor)
-	out._requires_grad = input._requires_grad
-	out._grad = None
-	out._grad_fn = None  # View operation - can add grad
-	out._dtype = input._dtype
-	out._backend = backend
-	out.device = input.device
-	out.active_device = input.active_device
-	out.data = result_data
-	return out
+        backend = input._backend
+        result_data = backend.expand_dims(input.data, axis)
+        
+        out = Tensor.__new__(Tensor)
+        out._requires_grad = input._requires_grad
+        out._grad = None
+        out._grad_fn = None  # View operation - can add grad
+        out._dtype = input._dtype
+        out._backend = backend
+        out.device = input.device
+        out.active_device = input.active_device
+        out.data = result_data
+        return out
 
 
 def concatenate(tensors, axis=0):
-	if not tensors:
-		raise ValueError("Need at least one tensor to concatenate")
-	
-	backend = tensors[0]._backend
-	data_list = [t.data for t in tensors]
-	result_data = backend.concatenate(data_list, axis=axis)
-	
-	out = Tensor.__new__(Tensor)
-	out._requires_grad = any(t._requires_grad for t in tensors)
-	out._grad = None
-	out._grad_fn = None  # Can add grad
-	out._dtype = tensors[0]._dtype
-	out._backend = backend
-	out.device = tensors[0].device
-	out.active_device = tensors[0].active_device
-	out.data = result_data
-	return out
+        if not tensors:
+                raise ValueError("Need at least one tensor to concatenate")
+        
+        backend = tensors[0]._backend
+        data_list = [t.data for t in tensors]
+        result_data = backend.concatenate(data_list, axis=axis)
+        
+        out = Tensor.__new__(Tensor)
+        out._requires_grad = any(t._requires_grad for t in tensors)
+        out._grad = None
+        out._grad_fn = None  # Can add grad
+        out._dtype = tensors[0]._dtype
+        out._backend = backend
+        out.device = tensors[0].device
+        out.active_device = tensors[0].active_device
+        out.data = result_data
+        return out
 
 
 def stack(tensors, axis=0):
-	if not tensors:
-		raise ValueError("Need at least one tensor to stack")
-	
-	backend = tensors[0]._backend
-	data_list = [t.data for t in tensors]
-	result_data = backend.stack(data_list, axis=axis)
-	
-	out = Tensor.__new__(Tensor)
-	out._requires_grad = any(t._requires_grad for t in tensors)
-	out._grad = None
-	out._grad_fn = None  # Can add grad
-	out._dtype = tensors[0]._dtype
-	out._backend = backend
-	out.device = tensors[0].device
-	out.active_device = tensors[0].active_device
-	out.data = result_data
-	return out
+        if not tensors:
+                raise ValueError("Need at least one tensor to stack")
+        
+        backend = tensors[0]._backend
+        data_list = [t.data for t in tensors]
+        result_data = backend.stack(data_list, axis=axis)
+        
+        out = Tensor.__new__(Tensor)
+        out._requires_grad = any(t._requires_grad for t in tensors)
+        out._grad = None
+        out._grad_fn = None  # Can add grad
+        out._dtype = tensors[0]._dtype
+        out._backend = backend
+        out.device = tensors[0].device
+        out.active_device = tensors[0].active_device
+        out.data = result_data
+        return out
 
 
 # ============================================================================
@@ -1080,41 +1080,41 @@ def stack(tensors, axis=0):
 # ============================================================================
 
 def dot(input, other):
-	backend = input._backend
-	if ENSURE_BACKEND and hasattr(other, '_backend'):
-		backend = _backend(input, other)
-	
-	result = backend.dot(input.data, other.data)
-	return result
+        backend = input._backend
+        if ENSURE_BACKEND and hasattr(other, '_backend'):
+                backend = _backend(input, other)
+        
+        result = backend.dot(input.data, other.data)
+        return result
 
 
 def outer(input, other):
-	backend = input._backend
-	if ENSURE_BACKEND and hasattr(other, '_backend'):
-		backend = _backend(input, other)
-	
-	result_data = backend.outer(input.data, other.data)
-	
-	out = Tensor.__new__(Tensor)
-	out._requires_grad = input._requires_grad or _requires_grad(other)
-	out._grad = None
-	out._grad_fn = None  # Can add grad
-	out._dtype = input._dtype
-	out._backend = backend
-	out.device = input.device
-	out.active_device = input.active_device
-	out.data = result_data
-	
-	return out
+        backend = input._backend
+        if ENSURE_BACKEND and hasattr(other, '_backend'):
+                backend = _backend(input, other)
+        
+        result_data = backend.outer(input.data, other.data)
+        
+        out = Tensor.__new__(Tensor)
+        out._requires_grad = input._requires_grad or _requires_grad(other)
+        out._grad = None
+        out._grad_fn = None  # Can add grad
+        out._dtype = input._dtype
+        out._backend = backend
+        out.device = input.device
+        out.active_device = input.active_device
+        out.data = result_data
+        
+        return out
 
 
 def inner(input, other):
-	backend = input._backend
-	if ENSURE_BACKEND and hasattr(other, '_backend'):
-		backend = _backend(input, other)
-	
-	result = backend.inner(input.data, other.data)
-	return result
+        backend = input._backend
+        if ENSURE_BACKEND and hasattr(other, '_backend'):
+                backend = _backend(input, other)
+        
+        result = backend.inner(input.data, other.data)
+        return result
 
 
 # ============================================================================
@@ -1122,522 +1122,526 @@ def inner(input, other):
 # ============================================================================
 
 def maximum(input, other, out=None):
-	backend = input._backend
-	if ENSURE_BACKEND and hasattr(other, '_backend'):
-		backend = _backend(input, other)
-	
-	other_data = other.data if hasattr(other, 'data') else other
-	
-	if out is None:
-		result_data = backend.maximum(input.data, other_data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or _requires_grad(other)
-		out._grad = None
-		out._grad_fn = None  # Can add grad based on which input was larger
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-	else:
-		backend.maximum(input.data, other_data, out=out.data)
-	
-	return out
+        backend = input._backend
+        if ENSURE_BACKEND and hasattr(other, '_backend'):
+                backend = _backend(input, other)
+        
+        other_data = other.data if hasattr(other, 'data') else other
+        
+        if out is None:
+                result_data = backend.maximum(input.data, other_data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad or _requires_grad(other)
+                out._grad = None
+                out._grad_fn = None  # Can add grad based on which input was larger
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+        else:
+                backend.maximum(input.data, other_data, out=out.data)
+        
+        return out
 
 
 def minimum(input, other, out=None):
-	backend = input._backend
-	if ENSURE_BACKEND and hasattr(other, '_backend'):
-		backend = _backend(input, other)
-	
-	other_data = other.data if hasattr(other, 'data') else other
-	
-	if out is None:
-		result_data = backend.minimum(input.data, other_data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad or _requires_grad(other)
-		out._grad = None
-		out._grad_fn = None  # Can add grad based on which input was smaller
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-	else:
-		backend.minimum(input.data, other_data, out=out.data)
-	
-	return out
+        backend = input._backend
+        if ENSURE_BACKEND and hasattr(other, '_backend'):
+                backend = _backend(input, other)
+        
+        other_data = other.data if hasattr(other, 'data') else other
+        
+        if out is None:
+                result_data = backend.minimum(input.data, other_data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad or _requires_grad(other)
+                out._grad = None
+                out._grad_fn = None  # Can add grad based on which input was smaller
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+        else:
+                backend.minimum(input.data, other_data, out=out.data)
+        
+        return out
 
 
 def clip(input, min_val, max_val, out=None):
-	backend = input._backend
-	
-	if out is None:
-		result_data = backend.clip(input.data, min_val, max_val)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._grad_fn = None  # Can add grad (gradient where not clipped, 0 where clipped)
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-	else:
-		backend.clip(input.data, min_val, max_val, out=out.data)
-	
-	return out
+        backend = input._backend
+        
+        if out is None:
+                result_data = backend.clip(input.data, min_val, max_val)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._grad_fn = None  # Can add grad (gradient where not clipped, 0 where clipped)
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+        else:
+                backend.clip(input.data, min_val, max_val, out=out.data)
+        
+        return out
 
 
 def where(condition, x, y):
-	# Get backend from first tensor-like argument
-	if hasattr(condition, '_backend'):
-		backend = condition._backend
-		condition_data = condition.data
-	elif hasattr(x, '_backend'):
-		backend = x._backend
-		condition_data = condition
-	else:
-		backend = y._backend
-		condition_data = condition
-	
-	x_data = x.data if hasattr(x, 'data') else x
-	y_data = y.data if hasattr(y, 'data') else y
-	
-	result_data = backend.where(condition_data, x_data, y_data)
-	
-	out = Tensor.__new__(Tensor)
-	out._requires_grad = False  # Conditional - difficult to handle
-	out._grad = None
-	out._grad_fn = None
-	out._dtype = x._dtype if hasattr(x, '_dtype') else (y._dtype if hasattr(y, '_dtype') else None)
-	out._backend = backend
-	out.device = x.device if hasattr(x, 'device') else (y.device if hasattr(y, 'device') else None)
-	out.active_device = x.active_device if hasattr(x, 'active_device') else (y.active_device if hasattr(y, 'active_device') else 'cpu')
-	out.data = result_data
-	return out
+        # Get backend from first tensor-like argument
+        if hasattr(condition, '_backend'):
+                backend = condition._backend
+                condition_data = condition.data
+        elif hasattr(x, '_backend'):
+                backend = x._backend
+                condition_data = condition
+        else:
+                backend = y._backend
+                condition_data = condition
+        
+        x_data = x.data if hasattr(x, 'data') else x
+        y_data = y.data if hasattr(y, 'data') else y
+        
+        result_data = backend.where(condition_data, x_data, y_data)
+        
+        out = Tensor.__new__(Tensor)
+        out._requires_grad = False  # Conditional - difficult to handle
+        out._grad = None
+        out._grad_fn = None
+        out._dtype = x._dtype if hasattr(x, '_dtype') else (y._dtype if hasattr(y, '_dtype') else None)
+        out._backend = backend
+        out.device = x.device if hasattr(x, 'device') else (y.device if hasattr(y, 'device') else None)
+        out.active_device = x.active_device if hasattr(x, 'active_device') else (y.active_device if hasattr(y, 'active_device') else 'cpu')
+        out.data = result_data
+        return out
 
 
 def equal(input, other):
-	backend = input._backend
-	if ENSURE_BACKEND and hasattr(other, '_backend'):
-		backend = _backend(input, other)
-	
-	other_data = other.data if hasattr(other, 'data') else other
-	result = backend.equal(input.data, other_data)
-	return result
+        backend = input._backend
+        if ENSURE_BACKEND and hasattr(other, '_backend'):
+                backend = _backend(input, other)
+        
+        other_data = other.data if hasattr(other, 'data') else other
+        result = backend.equal(input.data, other_data)
+        return result
 
 
 def greater(input, other):
-	backend = input._backend
-	if ENSURE_BACKEND and hasattr(other, '_backend'):
-		backend = _backend(input, other)
-	
-	other_data = other.data if hasattr(other, 'data') else other
-	result = backend.greater(input.data, other_data)
-	return result
+        backend = input._backend
+        if ENSURE_BACKEND and hasattr(other, '_backend'):
+                backend = _backend(input, other)
+        
+        other_data = other.data if hasattr(other, 'data') else other
+        result = backend.greater(input.data, other_data)
+        return result
 
 
 def less(input, other):
-	backend = input._backend
-	if ENSURE_BACKEND and hasattr(other, '_backend'):
-		backend = _backend(input, other)
-	
-	other_data = other.data if hasattr(other, 'data') else other
-	result = backend.less(input.data, other_data)
-	return result
+        backend = input._backend
+        if ENSURE_BACKEND and hasattr(other, '_backend'):
+                backend = _backend(input, other)
+        
+        other_data = other.data if hasattr(other, 'data') else other
+        result = backend.less(input.data, other_data)
+        return result
 
 
 
 def softmax(input, axis=-1, out=None):
-	backend = input._backend
-	
-	if out is None:
-		result_data = backend.softmax(input.data, axis=axis)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-		
-		if is_grad_enabled() and out._requires_grad:
-			out._grad_fn = Function(backward_softmax, [input], metadata={'axis': axis})
-	else:
-		backend.softmax(input.data, axis=axis, out=out.data)
-	
-	return out
+        backend = input._backend
+        
+        if out is None:
+                result_data = backend.softmax(input.data, axis=axis)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+                
+                if is_grad_enabled() and out._requires_grad:
+                        out._grad_fn = Function(backward_softmax, [input], metadata={'axis': axis})
+        else:
+                backend.softmax(input.data, axis=axis, out=out.data)
+        
+        return out
 
 
 def log_softmax(input, axis=-1, out=None):
-	backend = input._backend
-	
-	if out is None:
-		result_data = backend.log_softmax(input.data, axis=axis)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-		
-		if is_grad_enabled() and out._requires_grad:
-			out._grad_fn = Function(backward_log_softmax, [input], metadata={'axis': axis})
-	else:
-		backend.log_softmax(input.data, axis=axis, out=out.data)
-	
-	return out
+        backend = input._backend
+        
+        if out is None:
+                result_data = backend.log_softmax(input.data, axis=axis)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+                
+                if is_grad_enabled() and out._requires_grad:
+                        out._grad_fn = Function(backward_log_softmax, [input], metadata={'axis': axis})
+        else:
+                backend.log_softmax(input.data, axis=axis, out=out.data)
+        
+        return out
 
 
 def gelu(input, out=None):
-	backend = input._backend
-	
-	if out is None:
-		result_data = backend.gelu(input.data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-		
-		if is_grad_enabled() and out._requires_grad:
-			out._grad_fn = Function(backward_gelu, [input], metadata={})
-	else:
-		backend.gelu(input.data, out=out.data)
-	
-	return out
+        backend = input._backend
+        
+        if out is None:
+                result_data = backend.gelu(input.data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+                
+                if is_grad_enabled() and out._requires_grad:
+                        out._grad_fn = Function(backward_gelu, [input], metadata={})
+        else:
+                backend.gelu(input.data, out=out.data)
+        
+        return out
 
 
 def silu(input, out=None):
-	backend = input._backend
-	
-	if out is None:
-		result_data = backend.silu(input.data)
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-		
-		if is_grad_enabled() and out._requires_grad:
-			out._grad_fn = Function(backward_silu, [input], metadata={})
-	else:
-		backend.silu(input.data, out=out.data)
-	
-	return out
+        backend = input._backend
+        
+        if out is None:
+                result_data = backend.silu(input.data)
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+                
+                if is_grad_enabled() and out._requires_grad:
+                        out._grad_fn = Function(backward_silu, [input], metadata={})
+        else:
+                backend.silu(input.data, out=out.data)
+        
+        return out
 
 
 def layer_norm(input, normalized_shape, weight=None, bias=None, eps=1e-5):
-	backend = input._backend
-	
-	if isinstance(normalized_shape, int):
-		normalized_shape = (normalized_shape,)
-	
-	weight_data = weight.data if weight is not None else None
-	bias_data = bias.data if bias is not None else None
-	
-	result_data = backend.layer_norm(input.data, normalized_shape, weight_data, bias_data, eps)
-	
-	out = Tensor.__new__(Tensor)
-	out._requires_grad = input._requires_grad
-	out._grad = None
-	out._dtype = input._dtype
-	out._backend = backend
-	out.device = input.device
-	out.active_device = input.active_device
-	out.data = result_data
-	
-	if is_grad_enabled() and out._requires_grad:
-		out._grad_fn = Function(
-			backward_layer_norm, [input],
-			metadata={'normalized_shape': normalized_shape, 'eps': eps, 'gamma': weight_data}
-		)
-	
-	return out
+        backend = input._backend
+        
+        if isinstance(normalized_shape, int):
+                normalized_shape = (normalized_shape,)
+        
+        weight_data = weight.data if weight is not None else None
+        bias_data = bias.data if bias is not None else None
+        
+        result_data = backend.layer_norm(input.data, normalized_shape, weight_data, bias_data, eps)
+        
+        out = Tensor.__new__(Tensor)
+        out._requires_grad = input._requires_grad
+        out._grad = None
+        out._dtype = input._dtype
+        out._backend = backend
+        out.device = input.device
+        out.active_device = input.active_device
+        out.data = result_data
+        
+        if is_grad_enabled() and out._requires_grad:
+                out._grad_fn = Function(
+                        backward_layer_norm, [input],
+                        metadata={'normalized_shape': normalized_shape, 'eps': eps, 'gamma': weight_data}
+                )
+        
+        return out
 
 
 def rms_norm(input, normalized_shape, weight=None, eps=1e-6):
-	backend = input._backend
-	
-	if isinstance(normalized_shape, int):
-		normalized_shape = (normalized_shape,)
-	
-	weight_data = weight.data if weight is not None else None
-	result_data = backend.rms_norm(input.data, normalized_shape, weight_data, eps)
-	
-	out = Tensor.__new__(Tensor)
-	out._requires_grad = input._requires_grad
-	out._grad = None
-	out._dtype = input._dtype
-	out._backend = backend
-	out.device = input.device
-	out.active_device = input.active_device
-	out.data = result_data
-	
-	if is_grad_enabled() and out._requires_grad:
-		out._grad_fn = Function(
-			backward_rms_norm, [input],
-			metadata={'normalized_shape': normalized_shape, 'eps': eps, 'gamma': weight_data}
-		)
-	
-	return out
+        backend = input._backend
+        
+        if isinstance(normalized_shape, int):
+                normalized_shape = (normalized_shape,)
+        
+        weight_data = weight.data if weight is not None else None
+        result_data = backend.rms_norm(input.data, normalized_shape, weight_data, eps)
+        
+        out = Tensor.__new__(Tensor)
+        out._requires_grad = input._requires_grad
+        out._grad = None
+        out._dtype = input._dtype
+        out._backend = backend
+        out.device = input.device
+        out.active_device = input.active_device
+        out.data = result_data
+        
+        if is_grad_enabled() and out._requires_grad:
+                out._grad_fn = Function(
+                        backward_rms_norm, [input],
+                        metadata={'normalized_shape': normalized_shape, 'eps': eps, 'gamma': weight_data}
+                )
+        
+        return out
 
 
 def batch_norm(input, running_mean=None, running_var=None, weight=None, bias=None, 
-			   training=True, momentum=0.1, eps=1e-5):
-	backend = input._backend
-	
-	weight_data = weight.data if weight is not None else None
-	bias_data = bias.data if bias is not None else None
-	
-	result_data = backend.batch_norm(
-		input.data, running_mean, running_var, weight_data, bias_data, training, momentum, eps
-	)
-	
-	out = Tensor.__new__(Tensor)
-	out._requires_grad = input._requires_grad
-	out._grad = None
-	out._dtype = input._dtype
-	out._backend = backend
-	out.device = input.device
-	out.active_device = input.active_device
-	out.data = result_data
-	
-	if is_grad_enabled() and out._requires_grad and training:
-		out._grad_fn = Function(
-			backward_batch_norm, [input],
-			metadata={'eps': eps, 'gamma': weight_data}
-		)
-	
-	return out
+                           training=True, momentum=0.1, eps=1e-5):
+        backend = input._backend
+        
+        weight_data = weight.data if weight is not None else None
+        bias_data = bias.data if bias is not None else None
+        
+        result_data = backend.batch_norm(
+                input.data, running_mean, running_var, weight_data, bias_data, training, momentum, eps
+        )
+        
+        out = Tensor.__new__(Tensor)
+        out._requires_grad = input._requires_grad
+        out._grad = None
+        out._dtype = input._dtype
+        out._backend = backend
+        out.device = input.device
+        out.active_device = input.active_device
+        out.data = result_data
+        
+        if is_grad_enabled() and out._requires_grad and training:
+                out._grad_fn = Function(
+                        backward_batch_norm, [input],
+                        metadata={'eps': eps, 'gamma': weight_data}
+                )
+        
+        return out
 
 
 def group_norm(input, num_groups, weight=None, bias=None, eps=1e-5):
-	backend = input._backend
-	
-	weight_data = weight.data if weight is not None else None
-	bias_data = bias.data if bias is not None else None
-	
-	result_data = backend.group_norm(input.data, num_groups, weight_data, bias_data, eps)
-	
-	out = Tensor.__new__(Tensor)
-	out._requires_grad = input._requires_grad
-	out._grad = None
-	out._dtype = input._dtype
-	out._backend = backend
-	out.device = input.device
-	out.active_device = input.active_device
-	out.data = result_data
-	
-	if is_grad_enabled() and out._requires_grad:
-		out._grad_fn = Function(
-			backward_group_norm, [input],
-			metadata={'num_groups': num_groups, 'eps': eps, 'gamma': weight_data}
-		)
-	
-	return out
+        backend = input._backend
+        
+        weight_data = weight.data if weight is not None else None
+        bias_data = bias.data if bias is not None else None
+        
+        result_data = backend.group_norm(input.data, num_groups, weight_data, bias_data, eps)
+        
+        out = Tensor.__new__(Tensor)
+        out._requires_grad = input._requires_grad
+        out._grad = None
+        out._dtype = input._dtype
+        out._backend = backend
+        out.device = input.device
+        out.active_device = input.active_device
+        out.data = result_data
+        
+        if is_grad_enabled() and out._requires_grad:
+                out._grad_fn = Function(
+                        backward_group_norm, [input],
+                        metadata={'num_groups': num_groups, 'eps': eps, 'gamma': weight_data}
+                )
+        
+        return out
 
 
 def dropout(input, p=0.5, training=True, out=None):
-	backend = input._backend
-	
-	if out is None:
-		if training and p > 0:
-			mask, result_data = backend.dropout(input.data, p, training)
-		else:
-			mask = None
-			result_data = input.data
-		
-		out = Tensor.__new__(Tensor)
-		out._requires_grad = input._requires_grad
-		out._grad = None
-		out._dtype = input._dtype
-		out._backend = backend
-		out.device = input.device
-		out.active_device = input.active_device
-		out.data = result_data
-		
-		if is_grad_enabled() and out._requires_grad:
-			out._grad_fn = Function(
-				backward_dropout, [input],
-				metadata={'mask': mask, 'p': p, 'training': training}
-			)
-	else:
-		if training and p > 0:
-			_, out.data = backend.dropout(input.data, p, training)
-		else:
-			out.data = input.data
-	
-	return out
+        backend = input._backend
+        
+        if out is None:
+                if training and p > 0:
+                        mask, result_data = backend.dropout(input.data, p, training)
+                else:
+                        mask = None
+                        result_data = input.data
+                
+                out = Tensor.__new__(Tensor)
+                out._requires_grad = input._requires_grad
+                out._grad = None
+                out._dtype = input._dtype
+                out._backend = backend
+                out.device = input.device
+                out.active_device = input.active_device
+                out.data = result_data
+                
+                if is_grad_enabled() and out._requires_grad:
+                        out._grad_fn = Function(
+                                backward_dropout, [input],
+                                metadata={'mask': mask, 'p': p, 'training': training}
+                        )
+        else:
+                if training and p > 0:
+                        _, out.data = backend.dropout(input.data, p, training)
+                else:
+                        out.data = input.data
+        
+        return out
 
 
 def embedding(weight, indices, padding_idx=None):
-	backend = weight._backend
-	
-	indices_data = indices.data if hasattr(indices, 'data') else indices
-	result_data = backend.embedding_lookup(weight.data, indices_data, padding_idx)
-	
-	out = Tensor.__new__(Tensor)
-	out._requires_grad = weight._requires_grad
-	out._grad = None
-	out._dtype = weight._dtype
-	out._backend = backend
-	out.device = weight.device
-	out.active_device = weight.active_device
-	out.data = result_data
-	
-	if is_grad_enabled() and out._requires_grad:
-		out._grad_fn = Function(
-			backward_embedding, [weight],
-			metadata={'indices': indices_data, 'num_embeddings': weight.shape[0]}
-		)
-	
-	return out
+        backend = weight._backend
+        
+        indices_data = indices.data if hasattr(indices, 'data') else indices
+        result_data = backend.embedding_lookup(weight.data, indices_data, padding_idx)
+        
+        out = Tensor.__new__(Tensor)
+        out._requires_grad = weight._requires_grad
+        out._grad = None
+        out._dtype = weight._dtype
+        out._backend = backend
+        out.device = weight.device
+        out.active_device = weight.active_device
+        out.data = result_data
+        
+        if is_grad_enabled() and out._requires_grad:
+                out._grad_fn = Function(
+                        backward_embedding, [weight],
+                        metadata={'indices': indices_data, 'num_embeddings': weight.shape[0]}
+                )
+        
+        return out
 
 
 def permute(input, dims):
-	backend = input._backend
-	result_data = backend.transpose(input.data, dims)
-	
-	out = Tensor.__new__(Tensor)
-	out._requires_grad = input._requires_grad
-	out._grad = None
-	out._dtype = input._dtype
-	out._backend = backend
-	out.device = input.device
-	out.active_device = input.active_device
-	out.data = result_data
-	
-	if is_grad_enabled() and out._requires_grad:
-		out._grad_fn = Function(backward_permute, [input], metadata={'dims': dims})
-	
-	return out
+        backend = input._backend
+        result_data = backend.transpose(input.data, dims)
+        
+        out = Tensor.__new__(Tensor)
+        out._requires_grad = input._requires_grad
+        out._grad = None
+        out._dtype = input._dtype
+        out._backend = backend
+        out.device = input.device
+        out.active_device = input.active_device
+        out.data = result_data
+        
+        if is_grad_enabled() and out._requires_grad:
+                out._grad_fn = Function(backward_permute, [input], metadata={'dims': dims})
+        
+        return out
 
 
 def unsqueeze(input, dim):
-	backend = input._backend
-	result_data = backend.unsqueeze(input.data, dim)
-	
-	out = Tensor.__new__(Tensor)
-	out._requires_grad = input._requires_grad
-	out._grad = None
-	out._dtype = input._dtype
-	out._backend = backend
-	out.device = input.device
-	out.active_device = input.active_device
-	out.data = result_data
-	
-	if is_grad_enabled() and out._requires_grad:
-		out._grad_fn = Function(backward_unsqueeze, [input], metadata={'dim': dim})
-	
-	return out
+        backend = input._backend
+        result_data = backend.unsqueeze(input.data, dim)
+        
+        out = Tensor.__new__(Tensor)
+        out._requires_grad = input._requires_grad
+        out._grad = None
+        out._dtype = input._dtype
+        out._backend = backend
+        out.device = input.device
+        out.active_device = input.active_device
+        out.data = result_data
+        
+        if is_grad_enabled() and out._requires_grad:
+                out._grad_fn = Function(backward_unsqueeze, [input], metadata={'dim': dim})
+        
+        return out
 
 
 def split(input, split_size_or_sections, dim=0):
-	backend = input._backend
-	data = input.data
+        backend = input._backend
+        data = input.data
 
-	if data.ndim == 0:
-		raise ValueError("split expects at least a 1D tensor")
+        if data.ndim == 0:
+                raise ValueError("split expects at least a 1D tensor")
 
-	axis = dim % data.ndim
+        axis = dim % data.ndim
 
-	if isinstance(split_size_or_sections, int):
-		if split_size_or_sections <= 0:
-			raise ValueError("split_size must be positive")
-		total = data.shape[axis]
-		if total == 0:
-			raise ValueError("cannot split tensor with zero size along the given dimension")
-		full_chunks, remainder = divmod(total, split_size_or_sections)
-		sizes = [split_size_or_sections] * full_chunks
-		if remainder:
-			sizes.append(remainder)
-	else:
-		sizes = list(split_size_or_sections)
-		if not sizes:
-			raise ValueError("split expects a non-empty list of sections")
-		if any(size <= 0 for size in sizes):
-			raise ValueError("section sizes must be positive")
-		if sum(sizes) != data.shape[axis]:
-			raise ValueError("sum of split sizes must match tensor dimension")
+        if isinstance(split_size_or_sections, int):
+                if split_size_or_sections <= 0:
+                        raise ValueError("split_size must be positive")
+                total = data.shape[axis]
+                if total == 0:
+                        raise ValueError("cannot split tensor with zero size along the given dimension")
+                full_chunks, remainder = divmod(total, split_size_or_sections)
+                sizes = [split_size_or_sections] * full_chunks
+                if remainder:
+                        sizes.append(remainder)
+        else:
+                sizes = list(split_size_or_sections)
+                if not sizes:
+                        raise ValueError("split expects a non-empty list of sections")
+                if any(size <= 0 for size in sizes):
+                        raise ValueError("section sizes must be positive")
+                if builtins.sum(sizes) != data.shape[axis]:
+                        raise ValueError("sum of split sizes must match tensor dimension")
 
-	slices = [slice(None)] * data.ndim
-	start = 0
-	chunks_data = []
-	for size in sizes:
-		end = start + size
-		slices[axis] = slice(start, end)
-		chunk_view = data[tuple(slices)]
-		chunks_data.append(chunk_view)
-		start = end
+        slices = [slice(None)] * data.ndim
+        start = 0
+        chunks_data = []
+        for size in sizes:
+                end = start + size
+                slices[axis] = slice(start, end)
+                chunk_view = data[tuple(slices)]
+                chunks_data.append(chunk_view)
+                start = end
 
-	chunks = []
-	for chunk_data in chunks_data:
-		chunk = Tensor.__new__(Tensor)
-		chunk._requires_grad = input._requires_grad
-		chunk._grad = None
-		chunk._dtype = input._dtype
-		chunk._backend = backend
-		chunk.device = input.device
-		chunk.active_device = input.active_device
-		chunk.data = chunk_data
-		chunks.append(chunk)
+        chunks = []
+        for chunk_data in chunks_data:
+                chunk = Tensor.__new__(Tensor)
+                chunk._requires_grad = input._requires_grad
+                chunk._grad = None
+                chunk._dtype = input._dtype
+                chunk._backend = backend
+                chunk.device = input.device
+                chunk.active_device = input.active_device
+                chunk.data = chunk_data
+                chunks.append(chunk)
 
-	if is_grad_enabled() and input._requires_grad:
-		for chunk in chunks:
-			chunk._grad_fn = Function(backward_split, [input], metadata={'axis': axis})
+        if is_grad_enabled() and input._requires_grad:
+                for idx, chunk in enumerate(chunks):
+                        chunk._grad_fn = Function(
+                                backward_split,
+                                [input],
+                                metadata={'axis': axis, 'sizes': sizes, 'index': idx},
+                        )
 
-	return chunks
+        return chunks
 
 
 def gather(input, dim, index):
-	backend = input._backend
-	index_data = index.data if hasattr(index, 'data') else index
-	result_data = backend.gather(input.data, dim, index_data)
-	
-	out = Tensor.__new__(Tensor)
-	out._requires_grad = input._requires_grad
-	out._grad = None
-	out._dtype = input._dtype
-	out._backend = backend
-	out.device = input.device
-	out.active_device = input.active_device
-	out.data = result_data
-	
-	# Note: gather backward requires scatter, simplified
-	return out
+        backend = input._backend
+        index_data = index.data if hasattr(index, 'data') else index
+        result_data = backend.gather(input.data, dim, index_data)
+        
+        out = Tensor.__new__(Tensor)
+        out._requires_grad = input._requires_grad
+        out._grad = None
+        out._dtype = input._dtype
+        out._backend = backend
+        out.device = input.device
+        out.active_device = input.active_device
+        out.data = result_data
+        
+        # Note: gather backward requires scatter, simplified
+        return out
 
 
 def masked_fill(input, mask, value):
-	backend = input._backend
-	mask_data = mask.data if hasattr(mask, 'data') else mask
-	result_data = backend.masked_fill(input.data, mask_data, value)
-	
-	out = Tensor.__new__(Tensor)
-	out._requires_grad = input._requires_grad
-	out._grad = None
-	out._dtype = input._dtype
-	out._backend = backend
-	out.device = input.device
-	out.active_device = input.active_device
-	out.data = result_data
-	
-	if is_grad_enabled() and out._requires_grad:
-		out._grad_fn = Function(
-			backward_where, [None, input, None],
-			metadata={'condition': backend.logical_not(mask_data)}
-		)
-	
-	return out
+        backend = input._backend
+        mask_data = mask.data if hasattr(mask, 'data') else mask
+        result_data = backend.masked_fill(input.data, mask_data, value)
+        
+        out = Tensor.__new__(Tensor)
+        out._requires_grad = input._requires_grad
+        out._grad = None
+        out._dtype = input._dtype
+        out._backend = backend
+        out.device = input.device
+        out.active_device = input.active_device
+        out.data = result_data
+        
+        if is_grad_enabled() and out._requires_grad:
+                out._grad_fn = Function(
+                        backward_where, [None, input, None],
+                        metadata={'condition': backend.logical_not(mask_data)}
+                )
+        
+        return out
 
 

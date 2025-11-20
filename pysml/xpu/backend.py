@@ -17,12 +17,14 @@ except ImportError:
 
 precission_map = {"fp32": "float32", "fp16": "float16", "bf16": "bfloat16"}
 def convert(data, dtype, device=None, backend="level_zero"):
-	if device is not None:
-		if "xpu" in str(device):
-			device = str(device).split(":")[1]
-		return ng.array(data, dtype=precission_map[dtype.precission], device=f"{backend}:gpu:{str(device)}")
-	else:
-		return ng.array(data, dtype=precission_map[dtype.precission])
+        target_dtype = precission_map[dtype.precission]
+        if AVAILABLE and device is not None:
+                if "xpu" in str(device):
+                        device = str(device).split(":")[1]
+                return ng.array(data, dtype=target_dtype, device=f"{backend}:gpu:{str(device)}")
+
+        # CPU fallback or when device handling is unsupported
+        return ng.array(data, dtype=target_dtype)
 
 add = ng.add
 subtract = ng.subtract

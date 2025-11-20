@@ -1,5 +1,5 @@
 """PySML model family examples."""
 
-from . import diffusion, rwkv, transformer
+from . import autograd_reduction, diffusion, rwkv, transformer
 
-__all__ = ["diffusion", "rwkv", "transformer"]
+__all__ = ["autograd_reduction", "diffusion", "rwkv", "transformer"]

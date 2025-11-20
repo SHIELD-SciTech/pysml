@@ -18,6 +18,8 @@ class ExampleDeterminismTests(unittest.TestCase):
         self.assertLessEqual(max_diff, atol)
 
     def test_rwkv_matches_across_backends(self) -> None:
+        if not pysml.cuda.is_available():
+            self.skipTest("CUDA backend not available for deterministic RWKV comparison")
         cpu_logits = rwkv.deterministic_logits(ExampleConfig(backend="cpu"), seed=7)
         cuda_logits = rwkv.deterministic_logits(ExampleConfig(backend="cuda"), seed=7)
         self.assert_allclose(cpu_logits, cuda_logits)
@@ -26,10 +28,15 @@ class ExampleDeterminismTests(unittest.TestCase):
         cpu_logits = transformer.deterministic_logits(
             ExampleConfig(backend="cpu"), seed=11
         )
+        if not pysml.xpu.is_available():
+            self.skipTest("XPU backend not available for deterministic Transformer comparison")
+
         xpu_logits = transformer.deterministic_logits(ExampleConfig(backend="xpu"), seed=11)
         self.assert_allclose(cpu_logits, xpu_logits)
 
     def test_diffusion_matches_across_backends(self) -> None:
+        if not pysml.cuda.is_available():
+            self.skipTest("CUDA backend not available for deterministic diffusion comparison")
         cpu_preds = diffusion.deterministic_prediction(
             ExampleConfig(backend="cpu"), seed=3
         )
