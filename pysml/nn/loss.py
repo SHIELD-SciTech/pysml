@@ -445,11 +445,18 @@ class CTCLoss(Loss):
         def forward(self, log_probs, targets, input_lengths, target_lengths):
                 from .. import engine
                 from ..tensor import Tensor
+                import numpy as np
 
                 backend = log_probs._backend
                 time, batch_size, num_classes = log_probs.shape
 
                 targets_np = targets.numpy() if isinstance(targets, Tensor) else targets
+                targets_np = np.asarray(targets_np)
+
+                if targets_np.ndim != 2:
+                        raise ValueError(
+                                f"CTCLoss expects targets to have shape (batch, max_target_length); got {targets_np.ndim}D"
+                        )
                 input_lens = (
                         input_lengths.numpy().tolist()
                         if isinstance(input_lengths, Tensor)
@@ -466,7 +473,7 @@ class CTCLoss(Loss):
 
                 for b in range(batch_size):
                         max_time = min(int(input_lens[b]), time)
-                        max_targets = min(int(target_lens[b]), getattr(targets_np, 'shape', (0, 0))[1])
+                        max_targets = min(int(target_lens[b]), targets_np.shape[1])
 
                         if max_time <= 0 or max_targets <= 0:
                                 valid_mask[b] = 0.0 if self.zero_infinity else valid_mask[b]
