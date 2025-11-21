@@ -9,6 +9,7 @@ from typing import Any, Optional, Sequence, Tuple
 
 import pysml
 from pysml import utils
+from pysml.autograd import Function
 from pysml.ddp.communication import primitives as dist_primitives
 from pysml.tensor import Tensor
 
@@ -292,10 +293,106 @@ class PipelineModule(Module):
         payload: tuple[tuple[Any, ...], dict[str, Any]],
         spec: _StageSpec,
     ) -> tuple[tuple[Any, ...], dict[str, Any]]:
-        # Simple placeholder to keep graph intact; a fuller checkpoint implementation
-        # would re-execute the stage during backward. For now, return the original
-        # payload without detaching so gradients propagate correctly.
-        return payload
+        args, kwargs = payload
+
+        saved_args = args
+        saved_kwargs = kwargs
+
+        stage_inputs: list[Optional[Tensor]] = []
+
+        def _collect_inputs(obj: Any) -> None:
+            if isinstance(obj, Tensor):
+                stage_inputs.append(obj if obj._requires_grad else None)
+            elif isinstance(obj, (tuple, list)):
+                for item in obj:
+                    _collect_inputs(item)
+            elif isinstance(obj, dict):
+                for value in obj.values():
+                    _collect_inputs(value)
+
+        _collect_inputs(args)
+        _collect_inputs(kwargs)
+
+        def _make_accessor(path: list[tuple[str, Any]]):
+            def _access(payload_tree: tuple[tuple[Any, ...], dict[str, Any]]):
+                payload_args, payload_kwargs = payload_tree
+                token_type, token_key = path[0]
+                node: Any = payload_args if token_type == "args" else payload_kwargs
+                node = node[token_key]
+                for token_type, token_key in path[1:]:
+                    if token_type in {"tuple", "list"}:
+                        node = node[token_key]
+                    else:
+                        node = node[token_key]
+                return node
+
+            return _access
+
+        def _wrap_tensor(tensor: Tensor, path: list[tuple[str, Any]]):
+            accessor = _make_accessor(path)
+
+            def _checkpoint_backward(grad_output, *input_refs, **metadata):
+                inputs = [ref() if ref is not None else None for ref in input_refs]
+                for inp in inputs:
+                    if inp is not None:
+                        inp._grad = None
+
+                recomputed = spec.modules(*saved_args, **saved_kwargs)
+                recomputed_payload = self._normalize_output(recomputed)
+                target = metadata["accessor"](recomputed_payload)
+
+                if isinstance(target, Tensor) and grad_output is not None:
+                    target.backward(grad_output, retain_graph=False)
+
+                grads = []
+                for inp in inputs:
+                    if inp is None:
+                        grads.append(None)
+                    else:
+                        grads.append((inp, inp._grad))
+                        inp._grad = None
+                return grads
+
+            grad_fn = Function(
+                _checkpoint_backward,
+                stage_inputs,
+                metadata={"accessor": accessor},
+            )
+
+            wrapped = Tensor.__new__(Tensor)
+            wrapped._backend = tensor._backend
+            wrapped._dtype = tensor._dtype
+            wrapped._requires_grad = tensor._requires_grad
+            wrapped._grad = None
+            wrapped._grad_fn = grad_fn if tensor._requires_grad else None
+            wrapped.device = tensor.device
+            wrapped.active_device = tensor.active_device
+            wrapped._version = getattr(tensor, "_version", 0)
+            wrapped.data = tensor.data
+            return wrapped
+
+        def _wrap(obj: Any, path: list[tuple[str, Any]]):
+            if isinstance(obj, Tensor):
+                return _wrap_tensor(obj, path)
+            if isinstance(obj, tuple):
+                return tuple(
+                    _wrap(item, path + [("tuple", idx)]) for idx, item in enumerate(obj)
+                )
+            if isinstance(obj, list):
+                return [
+                    _wrap(item, path + [("list", idx)]) for idx, item in enumerate(obj)
+                ]
+            if isinstance(obj, dict):
+                return {
+                    key: _wrap(value, path + [("dict", key)])
+                    for key, value in obj.items()
+                }
+            return obj
+
+        wrapped_args = tuple(_wrap(arg, [("args", idx)]) for idx, arg in enumerate(args))
+        wrapped_kwargs = {k: _wrap(v, [("kwargs", k)]) for k, v in kwargs.items()}
+
+        return wrapped_args, wrapped_kwargs
 
     def _chunk_arguments(
         self, args: tuple[Any, ...], kwargs: dict[str, Any]

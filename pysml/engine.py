@@ -1382,13 +1382,36 @@ def rms_norm(input, normalized_shape, weight=None, eps=1e-6):
         return out
 
 
-def batch_norm(input, running_mean=None, running_var=None, weight=None, bias=None, 
+def batch_norm(input, running_mean=None, running_var=None, weight=None, bias=None,
                            training=True, momentum=0.1, eps=1e-5):
         backend = input._backend
-        
+
         weight_data = weight.data if weight is not None else None
         bias_data = bias.data if bias is not None else None
-        
+
+        if len(input.shape) == 2:
+                axes = (0,)
+        elif len(input.shape) == 4:
+                axes = (0, 2, 3)
+        else:
+                axes = (0,)
+
+        if training:
+                mean = backend.mean(input.data, axis=axes, keepdims=True)
+                centered = backend.subtract(input.data, mean)
+                var = backend.mean(backend.multiply(centered, centered), axis=axes, keepdims=True)
+        else:
+                shape_4d = (1, -1, 1, 1) if len(input.shape) == 4 else (1, -1)
+                mean = backend.reshape(running_mean, shape_4d) if running_mean is not None else backend.mean(input.data, axis=axes, keepdims=True)
+                var = backend.reshape(running_var, shape_4d) if running_var is not None else backend.mean(
+                        backend.multiply(
+                                backend.subtract(input.data, mean),
+                                backend.subtract(input.data, mean),
+                        ),
+                        axis=axes,
+                        keepdims=True,
+                )
+
         result_data = backend.batch_norm(
                 input.data, running_mean, running_var, weight_data, bias_data, training, momentum, eps
         )
@@ -1405,9 +1428,9 @@ def batch_norm(input, running_mean=None, running_var=None, weight=None, bias=Non
         if is_grad_enabled() and out._requires_grad and training:
                 out._grad_fn = Function(
                         backward_batch_norm, [input],
-                        metadata={'eps': eps, 'gamma': weight_data}
+                        metadata={'eps': eps, 'gamma': weight_data, 'mean': mean, 'var': var, 'axes': axes}
                 )
-        
+
         return out
 
 

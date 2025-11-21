@@ -1228,28 +1228,25 @@ def backward_split(grad_output, input_ref, **metadata):
                 grad.device = input_tensor.device
                 grad.active_device = input_tensor.active_device
 
+                grad_data = backend.zeros_like(input_tensor.data)
+
                 if isinstance(grad_output, (list, tuple)):
-                        # Some autograd paths may provide a full list of grads. Treat None as zeros.
-                        chunk_grads = []
                         for idx, g in enumerate(grad_output):
+                                if g is None:
+                                        continue
                                 start = builtins.sum(sizes[:idx]) if sizes else 0
                                 end = start + (sizes[idx] if sizes else g.data.shape[axis])
-                                if g is None:
-                                        slice_shape = list(input_tensor.shape)
-                                        slice_shape[axis] = end - start
-                                        chunk_grads.append(backend.zeros(slice_shape, dtype=grad._dtype.precission))
-                                else:
-                                        chunk_grads.append(g.data)
-                        grad.data = backend.concatenate(chunk_grads, axis=axis)
-                else:
-                        grad_data = backend.zeros_like(input_tensor.data)
-                        if grad_output is not None:
-                                start = builtins.sum(sizes[:index]) if sizes else 0
-                                end = start + (sizes[index] if sizes else grad_output.data.shape[axis])
                                 slices = [slice(None)] * grad_data.ndim
                                 slices[axis] = slice(start, end)
-                                grad_data[tuple(slices)] = grad_output.data
-                        grad.data = grad_data
+                                grad_data[tuple(slices)] = g.data
+                elif grad_output is not None:
+                        start = builtins.sum(sizes[:index]) if sizes else 0
+                        end = start + (sizes[index] if sizes else grad_output.data.shape[axis])
+                        slices = [slice(None)] * grad_data.ndim
+                        slices[axis] = slice(start, end)
+                        grad_data[tuple(slices)] = grad_output.data
+
+                grad.data = grad_data
 
                 grad._requires_grad = False
                 grad._grad = None
@@ -1859,7 +1856,7 @@ def backward_log_softmax(grad_output, input_ref, **metadata):
 def backward_batch_norm(grad_output, input_ref, **metadata):
         """
         Backward for batch normalization
-        
+
         This is a simplified version - full implementation needs running statistics
         """
         grads = []
@@ -1870,25 +1867,31 @@ def backward_batch_norm(grad_output, input_ref, **metadata):
                 backend = grad_output._backend
                 eps = metadata.get('eps', 1e-5)
                 gamma = metadata.get('gamma', None)
-                
+
                 grad = type(grad_output).__new__(type(grad_output))
                 grad._backend = backend
                 grad._dtype = grad_output._dtype
                 grad.device = grad_output.device
                 grad.active_device = grad_output.active_device
-                
+
                 # Batch norm normalizes over batch dimension (0)
                 # and spatial dimensions (2, 3, ...) for CNNs
                 # keeping channel dimension (1) separate
-                
-                # For simplicity, similar to layer norm but different axes
-                axes = tuple(range(len(input_tensor.shape)))
-                axes = tuple([ax for ax in axes if ax != 1])  # Keep channel dim
-                
-                # Recompute forward statistics
-                mean = backend.mean(input_tensor.data, axis=axes, keepdims=True)
-                centered = backend.subtract(input_tensor.data, mean)
-                var = backend.mean(backend.multiply(centered, centered), axis=axes, keepdims=True)
+
+                axes = metadata.get('axes')
+                if axes is None:
+                        axes = tuple(range(len(input_tensor.shape)))
+                        axes = tuple([ax for ax in axes if ax != 1])
+
+                # Prefer cached statistics to avoid recomputation.
+                mean = metadata.get('mean')
+                var = metadata.get('var')
+                if mean is None or var is None:
+                        mean = backend.mean(input_tensor.data, axis=axes, keepdims=True)
+                        centered = backend.subtract(input_tensor.data, mean)
+                        var = backend.mean(backend.multiply(centered, centered), axis=axes, keepdims=True)
+                else:
+                        centered = backend.subtract(input_tensor.data, mean)
                 std = backend.sqrt(backend.add(var, eps))
                 normalized = backend.divide(centered, std)
                 
