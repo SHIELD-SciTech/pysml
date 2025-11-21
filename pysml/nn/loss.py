@@ -1,5 +1,7 @@
 from .module import Module
+from ..autograd import Function, is_grad_enabled
 import math
+import numpy as np
 
 
 class Loss(Module):
@@ -56,9 +58,9 @@ class SmoothL1Loss(Loss):
 		super().__init__(reduction)
 		self.beta = beta
 	
-	def forward(self, input, target):
-		from .. import engine
-		backend = input._backend
+        def forward(self, input, target):
+                from .. import engine
+                backend = input._backend
 		
 		diff = engine.subtract(input, target)
 		abs_diff = engine.abs(diff)
@@ -89,7 +91,110 @@ class SmoothL1Loss(Loss):
 		
 		loss = engine.where(mask_tensor, small_loss, large_loss)
 		
-		return self._reduce(loss)
+                return self._reduce(loss)
+
+
+def _log_sum_exp(values):
+        if len(values) == 0:
+                return -np.inf
+
+        result = values[0]
+        for val in values[1:]:
+                result = np.logaddexp(result, val)
+        return result
+
+
+def _compute_ctc_loss_and_grad(log_probs, targets_np, input_lens, target_lens, blank, zero_infinity):
+        time, batch_size, num_classes = log_probs.shape
+        grad = np.zeros_like(log_probs)
+        losses = np.zeros(batch_size, dtype=log_probs.dtype)
+
+        for b in range(batch_size):
+                T = min(int(input_lens[b]), time)
+                L = min(int(target_lens[b]), targets_np.shape[1])
+
+                if T <= 0 or L < 0:
+                        losses[b] = 0.0 if zero_infinity else np.inf
+                        continue
+
+                target_seq = targets_np[b, :L]
+                extended = np.full(2 * L + 1, blank, dtype=np.int64)
+                extended[1::2] = target_seq
+
+                S = extended.shape[0]
+                alpha = np.full((T, S), -np.inf, dtype=log_probs.dtype)
+                beta = np.full((T, S), -np.inf, dtype=log_probs.dtype)
+
+                alpha[0, 0] = log_probs[0, b, blank]
+                if S > 1:
+                        alpha[0, 1] = log_probs[0, b, extended[1]]
+
+                for t in range(1, T):
+                        for s in range(S):
+                                candidates = [alpha[t - 1, s]]
+                                if s - 1 >= 0:
+                                        candidates.append(alpha[t - 1, s - 1])
+                                if s - 2 >= 0 and extended[s] != blank and extended[s] != extended[s - 2]:
+                                        candidates.append(alpha[t - 1, s - 2])
+
+                                alpha[t, s] = log_probs[t, b, extended[s]] + _log_sum_exp(candidates)
+
+                beta[T - 1, S - 1] = log_probs[T - 1, b, extended[S - 1]]
+                if S > 1:
+                        beta[T - 1, S - 2] = log_probs[T - 1, b, extended[S - 2]]
+
+                for t in range(T - 2, -1, -1):
+                        for s in range(S):
+                                candidates = [beta[t + 1, s]]
+                                if s + 1 < S:
+                                        candidates.append(beta[t + 1, s + 1])
+                                if s + 2 < S and extended[s] != blank and extended[s] != extended[s + 2]:
+                                        candidates.append(beta[t + 1, s + 2])
+
+                                beta[t, s] = log_probs[t, b, extended[s]] + _log_sum_exp(candidates)
+
+                loglike = alpha[T - 1, S - 1]
+                if S > 1:
+                        loglike = np.logaddexp(loglike, alpha[T - 1, S - 2])
+
+                loss_val = -loglike
+                if zero_infinity and not np.isfinite(loss_val):
+                        losses[b] = 0.0
+                        continue
+
+                losses[b] = loss_val
+
+                for t in range(T):
+                        for s in range(S):
+                                prob = alpha[t, s] + beta[t, s] - loglike
+                                grad[t, b, extended[s]] -= np.exp(prob)
+
+        return losses, grad
+
+
+def _backward_ctc(grad_output, log_probs_ref, **metadata):
+        grads = []
+        input_tensor = log_probs_ref() if log_probs_ref else None
+
+        if input_tensor and input_tensor._requires_grad:
+                backend = input_tensor._backend
+                grad_template = metadata.get('grad')
+                losses_shape = metadata.get('losses_shape', ())
+
+                scale = grad_output.data if hasattr(grad_output, 'data') else grad_output
+                scale_arr = backend.asarray(scale)
+
+                if losses_shape and scale_arr.shape == losses_shape:
+                        scale_arr = backend.reshape(scale_arr, (1, losses_shape[0], 1))
+
+                grad_scaled = backend.multiply(grad_template, scale_arr)
+
+                grad = input_tensor._new_like(grad_scaled, requires_grad=False)
+                grads.append((input_tensor, grad))
+        else:
+                grads.append(None)
+
+        return grads
 
 
 class CrossEntropyLoss(Loss):
@@ -443,9 +548,7 @@ class CTCLoss(Loss):
 		self.zero_infinity = zero_infinity
 	
         def forward(self, log_probs, targets, input_lengths, target_lengths):
-                from .. import engine
                 from ..tensor import Tensor
-                import numpy as np
 
                 backend = log_probs._backend
                 time, batch_size, num_classes = log_probs.shape
@@ -468,50 +571,33 @@ class CTCLoss(Loss):
                         else list(target_lengths)
                 )
 
-                mask_data = backend.zeros(log_probs.shape, dtype=log_probs.data.dtype)
-                valid_mask = backend.ones(batch_size, dtype=log_probs.data.dtype)
+                losses_data, grad_data = _compute_ctc_loss_and_grad(
+                        log_probs.data,
+                        targets_np,
+                        input_lens,
+                        target_lens,
+                        self.blank,
+                        self.zero_infinity,
+                )
 
-                for b in range(batch_size):
-                        max_time = min(int(input_lens[b]), time)
-                        max_targets = min(int(target_lens[b]), targets_np.shape[1])
+                losses = Tensor.__new__(Tensor)
+                losses._backend = backend
+                losses._dtype = log_probs._dtype
+                losses._requires_grad = log_probs._requires_grad
+                losses._grad = None
+                losses.device = log_probs.device
+                losses.active_device = log_probs.active_device
+                losses.data = backend.asarray(losses_data)
 
-                        if max_time <= 0 or max_targets <= 0:
-                                valid_mask[b] = 0.0 if self.zero_infinity else valid_mask[b]
-                                continue
-
-                        steps = min(max_time, max_targets)
-                        for t in range(steps):
-                                cls = int(targets_np[b, t])
-                                if cls < 0 or cls >= num_classes:
-                                        continue
-                                mask_data[t, b, cls] = 1.0
-
-                        if self.zero_infinity and max_time < max_targets:
-                                valid_mask[b] = 0.0
-
-                mask = Tensor.__new__(Tensor)
-                mask._backend = backend
-                mask._dtype = log_probs._dtype
-                mask._requires_grad = False
-                mask._grad = None
-                mask.device = log_probs.device
-                mask.active_device = log_probs.active_device
-                mask.data = mask_data
-
-                selected = engine.multiply(log_probs, mask)
-                log_probs_per_sample = engine.sum_with_grad(selected, axis=(0, 2))
-                losses = engine.negative(log_probs_per_sample)
-
-                if self.zero_infinity:
-                        weight = Tensor.__new__(Tensor)
-                        weight._backend = backend
-                        weight._dtype = log_probs._dtype
-                        weight._requires_grad = False
-                        weight._grad = None
-                        weight.device = log_probs.device
-                        weight.active_device = log_probs.active_device
-                        weight.data = valid_mask
-                        losses = engine.multiply(losses, weight)
+                if is_grad_enabled() and losses._requires_grad:
+                        losses._grad_fn = Function(
+                                _backward_ctc,
+                                [log_probs],
+                                metadata={
+                                        'grad': backend.asarray(grad_data),
+                                        'losses_shape': losses_data.shape,
+                                },
+                        )
 
                 return self._reduce(losses)
 

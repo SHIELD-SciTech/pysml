@@ -13,7 +13,7 @@ backward_log, backward_tanh, backward_sum, backward_mean, backward_transpose,
 	backward_permute, backward_unsqueeze,
         backward_abs, backward_clip, backward_where,
         backward_maximum, backward_minimum,
-        backward_max_reduce,
+        backward_max_reduce, backward_min_reduce,
         backward_split,
 )
 import builtins
@@ -702,7 +702,7 @@ def abs(input, out=None):
                 out = Tensor.__new__(Tensor)
                 out._requires_grad = input._requires_grad
                 out._grad = None
-                out._grad_fn = None  # Requires sign tracking for proper backward
+                out._grad_fn = None
                 out._dtype = input._dtype
                 out._backend = backend
                 out.device = input.device
@@ -710,6 +710,14 @@ def abs(input, out=None):
                 out.data = result_data
         else:
                 backend.abs(input.data, out=out.data)
+                out = _prepare_inplace_out(out, input, backend, input._requires_grad)
+
+        if is_grad_enabled() and out._requires_grad:
+                out._grad_fn = Function(
+                        backward_abs,
+                        [input],
+                        metadata={},
+                )
         return out
 
 
@@ -1004,12 +1012,20 @@ def concatenate(tensors, axis=0):
         out = Tensor.__new__(Tensor)
         out._requires_grad = any(t._requires_grad for t in tensors)
         out._grad = None
-        out._grad_fn = None  # Can add grad
+        out._grad_fn = None
         out._dtype = tensors[0]._dtype
         out._backend = backend
         out.device = tensors[0].device
         out.active_device = tensors[0].active_device
         out.data = result_data
+
+        if is_grad_enabled() and out._requires_grad:
+                sizes = [t.shape[axis] for t in tensors]
+                out._grad_fn = Function(
+                        backward_concatenate,
+                        [t if t._requires_grad else None for t in tensors],
+                        metadata={'axis': axis, 'sizes': sizes},
+                )
         return out
 
 
@@ -1604,6 +1620,13 @@ def split(input, split_size_or_sections, dim=0):
                 start = end
 
         chunks = []
+        shared_state = {
+                'axis': axis,
+                'sizes': sizes,
+                'num_chunks': len(chunks_data),
+                'buffer': None,
+                'completed': 0,
+        }
         for chunk_data in chunks_data:
                 chunk = Tensor.__new__(Tensor)
                 chunk._requires_grad = input._requires_grad
@@ -1620,7 +1643,12 @@ def split(input, split_size_or_sections, dim=0):
                         chunk._grad_fn = Function(
                                 backward_split,
                                 [input],
-                                metadata={'axis': axis, 'sizes': sizes, 'index': idx},
+                                metadata={
+                                        'axis': axis,
+                                        'sizes': sizes,
+                                        'index': idx,
+                                        'shared_state': shared_state,
+                                },
                         )
 
         return chunks
