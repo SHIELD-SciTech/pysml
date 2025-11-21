@@ -355,6 +355,9 @@ def backward_matmul(grad_output, input_ref, other_ref, **metadata):
 
                 other_T = backend.transpose(other_tensor.data)
                 grad_data = backend.matmul(grad_output.data, other_T)
+
+                if hasattr(grad_data, 'shape') and hasattr(input_tensor, 'shape'):
+                        grad_data = _reduce_grad_to_shape(grad_data, input_tensor.shape, backend)
                 grad = _wrap_grad_tensor(grad_data, input_tensor)
 
                 grads.append((input_tensor, grad))
@@ -367,6 +370,9 @@ def backward_matmul(grad_output, input_ref, other_ref, **metadata):
 
                 input_T = backend.transpose(input_tensor.data)
                 grad_data = backend.matmul(input_T, grad_output.data)
+
+                if hasattr(grad_data, 'shape') and hasattr(other_tensor, 'shape'):
+                        grad_data = _reduce_grad_to_shape(grad_data, other_tensor.shape, backend)
                 grad = _wrap_grad_tensor(grad_data, other_tensor)
 
                 grads.append((other_tensor, grad))

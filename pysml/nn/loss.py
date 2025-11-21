@@ -524,27 +524,36 @@ class FocalLoss(Loss):
 		self.alpha = alpha
 		self.gamma = gamma
 	
-	def forward(self, input, target):
-		from .. import engine
-		
-		# Focal Loss: -alpha * (1-p)^gamma * log(p)
-		# where p is the probability of the true class
-		
-		# Apply softmax to get probabilities
-		probs = engine.softmax(input, axis=-1)
-		
-		# Get probabilities for target classes
-		import numpy as np
-		backend = input._backend
-		
-		batch_size = input.shape[0]
-		probs_np = probs.numpy()
-		target_np = target.numpy()
-		
-		# Extract target class probabilities
-		target_probs = np.zeros(batch_size)
-		for i in range(batch_size):
-			target_probs[i] = probs_np[i, int(target_np[i])]
+        def forward(self, input, target):
+                from .. import engine
+
+                import numpy as np
+                # Focal Loss: -alpha * (1-p)^gamma * log(p)
+                # where p is the probability of the true class
+
+                original_shape = input.shape
+                if len(original_shape) > 2:
+                        batch_size = original_shape[0]
+                        num_classes = original_shape[1]
+                        input_2d = input.reshape((batch_size * np.prod(original_shape[2:]), num_classes))
+                        target_flat = target.reshape((-1,))
+                else:
+                        input_2d = input
+                        target_flat = target
+
+                # Apply softmax to get probabilities
+                probs = engine.softmax(input_2d, axis=-1)
+
+                # Get probabilities for target classes
+                backend = input._backend
+                batch_size = input_2d.shape[0]
+                probs_np = probs.numpy()
+                target_np = target_flat.numpy()
+
+                # Extract target class probabilities
+                target_probs = np.zeros(batch_size)
+                for i in range(batch_size):
+                        target_probs[i] = probs_np[i, int(target_np[i])]
 		
 		from .. import Tensor
 		pt = Tensor.__new__(Tensor)
