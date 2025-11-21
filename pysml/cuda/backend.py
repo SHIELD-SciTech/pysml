@@ -20,10 +20,12 @@ else:
                 return out
 
 
-precission_map = {"fp32": "float32", "fp16": "float16", "bf16": "float16"}
+precision_map = {"fp32": "float32", "fp16": "float16", "bf16": "float16"}
+precision = precision_map
 def convert(data, dtype, device=None):
-        if hasattr(dtype, 'precission'):
-                pres = precission_map[dtype.precission]
+        if hasattr(dtype, 'precision') or hasattr(dtype, 'precission'):
+                dtype_key = getattr(dtype, 'precision', getattr(dtype, 'precission', None))
+                pres = precision_map[dtype_key]
         else:
                 pres = dtype
         if device is not None:
