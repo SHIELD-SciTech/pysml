@@ -65,6 +65,7 @@ class PipelineModule(Module):
         self._latest_metrics: Optional[utils.PipelineMetrics] = None
         self._stage_latencies: list[list[float]] = [[] for _ in self._stages]
         self._stage_memory: list[list[int]] = [[] for _ in self._stages]
+        self._stage_messages: list[list[Any]] = [[] for _ in self._stages]
 
     # ------------------------------------------------------------------
     # Partition helpers
@@ -224,7 +225,7 @@ class PipelineModule(Module):
         self._stage_memory[stage_idx].append(self._estimate_bytes(normalized))
         self._communicate(stage_idx, normalized)
         if self.activation_checkpoint:
-            normalized = self._detach_payload(normalized)
+            normalized = self._checkpoint_payload(stage_idx, normalized, spec)
         return normalized
 
     def _communicate(
@@ -235,12 +236,14 @@ class PipelineModule(Module):
         tensors = self._collect_tensors(payload)
         if not tensors:
             return
+        transmitted: list[Any] = []
         if self.communication == "gather":
             for tensor in tensors:
-                dist_primitives.gather(tensor, dst=0)
+                transmitted.append(dist_primitives.gather(tensor, dst=0))
         else:
             for tensor in tensors:
-                dist_primitives.send(tensor, dst=0)
+                transmitted.append(dist_primitives.send(tensor, dst=0))
+        self._stage_messages[stage_idx] = transmitted
 
     def _collect_tensors(self, payload: tuple[tuple[Any, ...], dict[str, Any]]) -> list[Tensor]:
         tensors: list[Tensor] = []
@@ -283,28 +286,16 @@ class PipelineModule(Module):
             return tuple(), output
         return (output,), {}
 
-    def _detach_payload(
-        self, payload: tuple[tuple[Any, ...], dict[str, Any]]
+    def _checkpoint_payload(
+        self,
+        stage_idx: int,
+        payload: tuple[tuple[Any, ...], dict[str, Any]],
+        spec: _StageSpec,
     ) -> tuple[tuple[Any, ...], dict[str, Any]]:
-        args, kwargs = payload
-        return self._detach_args(args), self._detach_kwargs(kwargs)
-
-    def _detach_args(self, args: tuple[Any, ...]) -> tuple[Any, ...]:
-        return tuple(self._detach_value(arg) for arg in args)
-
-    def _detach_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
-        return {key: self._detach_value(value) for key, value in kwargs.items()}
-
-    def _detach_value(self, value: Any) -> Any:
-        if isinstance(value, Tensor):
-            return value.detach()
-        if isinstance(value, tuple):
-            return tuple(self._detach_value(item) for item in value)
-        if isinstance(value, list):
-            return [self._detach_value(item) for item in value]
-        if isinstance(value, dict):
-            return {k: self._detach_value(v) for k, v in value.items()}
-        return value
+        # Simple placeholder to keep graph intact; a fuller checkpoint implementation
+        # would re-execute the stage during backward. For now, return the original
+        # payload without detaching so gradients propagate correctly.
+        return payload
 
     def _chunk_arguments(
         self, args: tuple[Any, ...], kwargs: dict[str, Any]
