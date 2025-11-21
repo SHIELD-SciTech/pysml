@@ -314,12 +314,14 @@ class PipelineModule(Module):
         _collect_inputs(kwargs)
 
         def _make_accessor(path: list[tuple[str, Any]]):
-            def _access(payload_tree: tuple[tuple[Any, ...], dict[str, Any]]):
+            path_tokens = tuple(path)
+
+            def _access(payload_tree: tuple[tuple[Any, ...], dict[str, Any]], path_snapshot=path_tokens):
                 payload_args, payload_kwargs = payload_tree
-                token_type, token_key = path[0]
+                token_type, token_key = path_snapshot[0]
                 node: Any = payload_args if token_type == "args" else payload_kwargs
                 node = node[token_key]
-                for token_type, token_key in path[1:]:
+                for token_type, token_key in path_snapshot[1:]:
                     if token_type in {"tuple", "list"}:
                         node = node[token_key]
                     else:
@@ -331,7 +333,7 @@ class PipelineModule(Module):
         def _wrap_tensor(tensor: Tensor, path: list[tuple[str, Any]]):
             accessor = _make_accessor(path)
 
-            def _checkpoint_backward(grad_output, *input_refs, **metadata):
+            def _checkpoint_backward(grad_output, *input_refs, accessor=accessor, saved_args=saved_args, saved_kwargs=saved_kwargs, **metadata):
                 inputs = [ref() if ref is not None else None for ref in input_refs]
                 for inp in inputs:
                     if inp is not None:
@@ -339,7 +341,7 @@ class PipelineModule(Module):
 
                 recomputed = spec.modules(*saved_args, **saved_kwargs)
                 recomputed_payload = self._normalize_output(recomputed)
-                target = metadata["accessor"](recomputed_payload)
+                target = metadata["accessor"](recomputed_payload) if "accessor" in metadata else accessor(recomputed_payload)
 
                 if isinstance(target, Tensor) and grad_output is not None:
                     target.backward(grad_output, retain_graph=False)
