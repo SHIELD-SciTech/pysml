@@ -445,11 +445,18 @@ class CTCLoss(Loss):
         def forward(self, log_probs, targets, input_lengths, target_lengths):
                 from .. import engine
                 from ..tensor import Tensor
+                import numpy as np
 
                 backend = log_probs._backend
                 time, batch_size, num_classes = log_probs.shape
 
                 targets_np = targets.numpy() if isinstance(targets, Tensor) else targets
+                targets_np = np.asarray(targets_np)
+
+                if targets_np.ndim != 2:
+                        raise ValueError(
+                                f"CTCLoss expects targets to have shape (batch, max_target_length); got {targets_np.ndim}D"
+                        )
                 input_lens = (
                         input_lengths.numpy().tolist()
                         if isinstance(input_lengths, Tensor)
@@ -466,7 +473,7 @@ class CTCLoss(Loss):
 
                 for b in range(batch_size):
                         max_time = min(int(input_lens[b]), time)
-                        max_targets = min(int(target_lens[b]), getattr(targets_np, 'shape', (0, 0))[1])
+                        max_targets = min(int(target_lens[b]), targets_np.shape[1])
 
                         if max_time <= 0 or max_targets <= 0:
                                 valid_mask[b] = 0.0 if self.zero_infinity else valid_mask[b]
@@ -517,27 +524,36 @@ class FocalLoss(Loss):
 		self.alpha = alpha
 		self.gamma = gamma
 	
-	def forward(self, input, target):
-		from .. import engine
-		
-		# Focal Loss: -alpha * (1-p)^gamma * log(p)
-		# where p is the probability of the true class
-		
-		# Apply softmax to get probabilities
-		probs = engine.softmax(input, axis=-1)
-		
-		# Get probabilities for target classes
-		import numpy as np
-		backend = input._backend
-		
-		batch_size = input.shape[0]
-		probs_np = probs.numpy()
-		target_np = target.numpy()
-		
-		# Extract target class probabilities
-		target_probs = np.zeros(batch_size)
-		for i in range(batch_size):
-			target_probs[i] = probs_np[i, int(target_np[i])]
+        def forward(self, input, target):
+                from .. import engine
+
+                import numpy as np
+                # Focal Loss: -alpha * (1-p)^gamma * log(p)
+                # where p is the probability of the true class
+
+                original_shape = input.shape
+                if len(original_shape) > 2:
+                        batch_size = original_shape[0]
+                        num_classes = original_shape[1]
+                        input_2d = input.reshape((batch_size * np.prod(original_shape[2:]), num_classes))
+                        target_flat = target.reshape((-1,))
+                else:
+                        input_2d = input
+                        target_flat = target
+
+                # Apply softmax to get probabilities
+                probs = engine.softmax(input_2d, axis=-1)
+
+                # Get probabilities for target classes
+                backend = input._backend
+                batch_size = input_2d.shape[0]
+                probs_np = probs.numpy()
+                target_np = target_flat.numpy()
+
+                # Extract target class probabilities
+                target_probs = np.zeros(batch_size)
+                for i in range(batch_size):
+                        target_probs[i] = probs_np[i, int(target_np[i])]
 		
 		from .. import Tensor
 		pt = Tensor.__new__(Tensor)

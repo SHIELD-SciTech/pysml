@@ -55,9 +55,9 @@ class Optimizer:
         def _ensure_state_device(self, param_state: Dict, param) -> None:
                 if not param_state:
                         return
-                target = getattr(param.data, 'active_device', None)
+                target = getattr(param, 'device', None) or getattr(param.data, 'active_device', None)
                 for key, value in list(param_state.items()):
-                        if isinstance(value, Tensor) and value.active_device != target:
+                        if isinstance(value, Tensor) and value.device != target:
                                 param_state[key] = value.to(target)
 
         def _maybe_offload_state(self, param_state: Dict, param) -> None:
@@ -213,7 +213,7 @@ class Adam(Optimizer):
                                         continue
                                 
                                 grad = p.grad
-                                
+
                                 # Initialize state
                                 param_state = self.state.get(id(p), {})
                                 self._ensure_state_device(param_state, p)
@@ -322,7 +322,6 @@ class Adam(Optimizer):
                                 p.data.data = engine.subtract(p.data, engine.multiply(update, step_size)).data
 
                                 self.state[id(p)] = param_state
-                                self._maybe_offload_state(param_state, p)
                                 self._maybe_offload_state(param_state, p)
 
 
@@ -505,7 +504,8 @@ class RMSprop(Optimizer):
                                 
                                 # Initialize state
                                 param_state = self.state.get(id(p), {})
-                                
+                                self._ensure_state_device(param_state, p)
+
                                 if len(param_state) == 0:
                                         param_state['step'] = 0
                                         

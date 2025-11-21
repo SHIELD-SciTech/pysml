@@ -2,7 +2,13 @@ import numpy as np
 
 AVAILABLE = True
 
-precission_map = {"fp32": "float32", "fp16": "float16", "bf16": "float16"}
+precision_map = {"fp32": "float32", "fp16": "float16", "bf16": "float16"}
+precision = precision_map
+
+
+def rand(shape, device=None):
+        """Generate random numbers in [0, 1) using NumPy's RNG."""
+        return np.random.rand(*shape)
 
 def convert(data, dtype, device=None):
 	# Convert from GPU backends to CPU
@@ -10,7 +16,8 @@ def convert(data, dtype, device=None):
 		data = data.get()
 	elif hasattr(data, 'asnumpy'):  # dpnp array
 		data = data.asnumpy()
-	return np.array(data, dtype=precission_map[dtype.precission])
+        dtype_key = getattr(dtype, "precision", getattr(dtype, "precission", None))
+        return np.array(data, dtype=precision_map[dtype_key])
 
 add = np.add
 subtract = np.subtract
@@ -385,14 +392,14 @@ def group_norm(x, num_groups, weight=None, bias=None, eps=1e-5, out=None):
 
 
 def dropout(x, p=0.5, training=True):
-	if not training or p == 0:
-		return None, x
-	
-	keep_prob = 1.0 - p
-	# Efficient boolean mask
-	mask = np.random.rand(*x.shape) > p
-	# Single-pass: mask + scale (saves temporary array)
-	output = np.where(mask, x * (1.0 / keep_prob), 0)
+        if not training or p == 0:
+                return None, x
+
+        keep_prob = 1.0 - p
+        # Efficient boolean mask using backend RNG
+        mask = rand(x.shape) > p
+        # Single-pass: mask + scale (saves temporary array)
+        output = np.where(mask, x * (1.0 / keep_prob), 0)
 	
 	return mask.astype(x.dtype), output
 

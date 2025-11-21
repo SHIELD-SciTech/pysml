@@ -20,10 +20,22 @@ else:
                 return out
 
 
-precission_map = {"fp32": "float32", "fp16": "float16", "bf16": "float16"}
+precision_map = {"fp32": "float32", "fp16": "float16", "bf16": "float16"}
+precision = precision_map
+
+
+def rand(shape, device=None):
+        if AVAILABLE and device is not None and "cuda" in str(device):
+                        device_id = int(str(device).split(":")[1])
+                        with cp.cuda.Device(device_id):
+                                return cp.random.rand(*shape)
+        return cp.random.rand(*shape)
+
+
 def convert(data, dtype, device=None):
-        if hasattr(dtype, 'precission'):
-                pres = precission_map[dtype.precission]
+        if hasattr(dtype, 'precision') or hasattr(dtype, 'precission'):
+                dtype_key = getattr(dtype, 'precision', getattr(dtype, 'precission', None))
+                pres = precision_map[dtype_key]
         else:
                 pres = dtype
         if device is not None:
@@ -418,14 +430,14 @@ def group_norm(x, num_groups, weight=None, bias=None, eps=1e-5, out=None):
 
 
 def dropout(x, p=0.5, training=True):
-	if not training or p == 0:
-		return None, x
-	
-	keep_prob = 1.0 - p
-	# GPU random generation (CUDA cuRAND)
-	mask = cp.random.rand(*x.shape) > p
-	# Single-pass GPU operation
-	output = cp.where(mask, x * (1.0 / keep_prob), 0)
+        if not training or p == 0:
+                return None, x
+
+        keep_prob = 1.0 - p
+        # GPU random generation (CUDA cuRAND)
+        mask = rand(x.shape, device=getattr(x, "device", None)) > p
+        # Single-pass GPU operation
+        output = cp.where(mask, x * (1.0 / keep_prob), 0)
 	
 	return mask.astype(x.dtype), output
 

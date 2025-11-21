@@ -80,8 +80,22 @@ class TensorBufferPool:
                         }
 
         def _evict_if_needed(self):
-                while self._total_bytes > self._capacity_bytes and self._lru:
-                        buffer_id, (key, buffer, nbytes) = self._lru.popitem(last=False)
+                if self._total_bytes <= self._capacity_bytes:
+                        return
+
+                bytes_to_free = self._total_bytes - self._capacity_bytes
+                freed = 0
+                eviction_candidates = []
+
+                # Collect eviction candidates before mutating the pool structures
+                for buffer_id, (key, buffer, nbytes) in list(self._lru.items()):
+                        eviction_candidates.append((buffer_id, key, buffer, nbytes))
+                        freed += nbytes
+                        if freed >= bytes_to_free:
+                                break
+
+                for buffer_id, key, buffer, nbytes in eviction_candidates:
+                        self._lru.pop(buffer_id, None)
                         pool = self._pools.get(key)
                         if pool:
                                 try:
