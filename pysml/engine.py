@@ -10,8 +10,8 @@ backward_log, backward_tanh, backward_sum, backward_mean, backward_transpose,
 	backward_softmax, backward_log_softmax, backward_gelu, backward_silu,
 	backward_layer_norm, backward_rms_norm, backward_batch_norm, backward_group_norm,
 	backward_dropout, backward_embedding,
-	backward_permute, backward_unsqueeze,
-        backward_abs, backward_clip, backward_where,
+        backward_permute, backward_unsqueeze,
+        backward_abs, backward_sign, backward_clip, backward_where,
         backward_maximum, backward_minimum,
         backward_max_reduce, backward_min_reduce,
         backward_split,
@@ -801,7 +801,7 @@ def sign(input, out=None):
         if out is None:
                 result_data = backend.sign(input.data)
                 out = Tensor.__new__(Tensor)
-                out._requires_grad = False  # Not differentiable at 0
+                out._requires_grad = input._requires_grad
                 out._grad = None
                 out._grad_fn = None
                 out._dtype = input._dtype
@@ -811,6 +811,14 @@ def sign(input, out=None):
                 out.data = result_data
         else:
                 backend.sign(input.data, out=out.data)
+                out = _prepare_inplace_out(out, input, backend, input._requires_grad)
+
+        if is_grad_enabled() and out._requires_grad:
+                out._grad_fn = Function(
+                        backward_sign,
+                        [input],
+                        metadata={},
+                )
         return out
 
 

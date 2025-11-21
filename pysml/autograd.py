@@ -1255,12 +1255,18 @@ def backward_split(grad_output, input_ref, **metadata):
                         for idx, g in enumerate(grad_output):
                                 if g is None:
                                         continue
+                                if grad_data is None:
+                                        grad_data = backend.zeros_like(input_tensor.data)
+                                        shared_state['buffer'] = grad_data
                                 start = builtins.sum(sizes[:idx]) if sizes else 0
                                 end = start + (sizes[idx] if sizes else g.data.shape[axis])
                                 slices = [slice(None)] * grad_data.ndim
                                 slices[axis] = slice(start, end)
                                 grad_data[tuple(slices)] = g.data
                 elif grad_output is not None:
+                        if grad_data is None:
+                                grad_data = backend.zeros_like(input_tensor.data)
+                                shared_state['buffer'] = grad_data
                         start = builtins.sum(sizes[:index]) if sizes else 0
                         end = start + (sizes[index] if sizes else grad_output.data.shape[axis])
                         slices = [slice(None)] * grad_data.ndim
@@ -1286,7 +1292,7 @@ def backward_split(grad_output, input_ref, **metadata):
                 grads.append((input_tensor, grad_tensor))
         else:
                 grads.append(None)
-        
+
         return grads
 
 
@@ -1542,8 +1548,25 @@ def backward_abs(grad_output, input_ref, **metadata):
                 grads.append((input_tensor, grad))
         else:
                 grads.append(None)
-        
+
         return grads
+
+
+def backward_sign(grad_output, input_ref, **metadata):
+        """
+        Backward for sign
+
+        The derivative of sign is zero everywhere except at 0 (undefined). We
+        propagate a zero gradient to allow the graph to remain connected.
+        """
+        input_tensor = input_ref() if input_ref else None
+
+        if input_tensor and input_tensor._requires_grad:
+                backend = input_tensor._backend
+                grad_data = backend.zeros_like(input_tensor.data)
+                grad = _wrap_grad_tensor(grad_data, input_tensor)
+                return [(input_tensor, grad)]
+        return [None]
 
 
 def backward_clip(grad_output, input_ref, **metadata):

@@ -71,8 +71,6 @@ class PipelineModule(Module):
         self.chunks = max(1, chunks)
         self.activation_checkpoint = activation_checkpoint
         self._latest_metrics: Optional[utils.PipelineMetrics] = None
-        self._stage_latencies: list[list[float]] = [[] for _ in self._stages]
-        self._stage_memory: list[list[int]] = [[] for _ in self._stages]
         self._stage_messages: list[list[Any]] = [[] for _ in self._stages]
 
     # ------------------------------------------------------------------
@@ -154,21 +152,19 @@ class PipelineModule(Module):
     # Execution helpers
     # ------------------------------------------------------------------
     def forward(self, *args: Any, **kwargs: Any) -> Any:
-        for bucket in self._stage_latencies:
-            bucket.clear()
-        for bucket in self._stage_memory:
-            bucket.clear()
+        stage_latencies: list[list[float]] = [[] for _ in self._stages]
+        stage_memory: list[list[int]] = [[] for _ in self._stages]
         micro_batches = self._chunk_arguments(args, kwargs)
         if self.schedule == "gpipe":
-            outputs = self._run_gpipe(micro_batches)
+            outputs = self._run_gpipe(micro_batches, stage_latencies, stage_memory)
         else:
-            outputs = self._run_1f1b(micro_batches)
+            outputs = self._run_1f1b(micro_batches, stage_latencies, stage_memory)
         merged = self._merge_outputs(outputs)
         self._latest_metrics = utils.build_pipeline_metrics(
             schedule=self.schedule,
             micro_batches=len(micro_batches),
-            stage_latencies=[utils.reduce_samples(samples) for samples in self._stage_latencies],
-            stage_memory=[utils.reduce_samples(samples) for samples in self._stage_memory],
+            stage_latencies=[utils.reduce_samples(samples) for samples in stage_latencies],
+            stage_memory=[utils.reduce_samples(samples) for samples in stage_memory],
             bubble=utils.estimate_pipeline_bubble(
                 len(self._stages), len(micro_batches), self.schedule
             ),
@@ -178,16 +174,28 @@ class PipelineModule(Module):
     def profile(self) -> Optional[utils.PipelineMetrics]:
         return self._latest_metrics
 
-    def _run_gpipe(self, micro_batches: list[tuple[tuple[Any, ...], dict[str, Any]]]):
+    def _run_gpipe(
+        self,
+        micro_batches: list[tuple[tuple[Any, ...], dict[str, Any]]],
+        stage_latencies: list[list[float]],
+        stage_memory: list[list[int]],
+    ):
         outputs = []
         for args, kwargs in micro_batches:
             payload = (args, kwargs)
             for idx, stage in enumerate(self._stages):
-                payload = self._execute_stage(idx, stage, payload)
+                payload = self._execute_stage(
+                    idx, stage, payload, stage_latencies, stage_memory
+                )
             outputs.append(self._denormalize(payload))
         return outputs
 
-    def _run_1f1b(self, micro_batches: list[tuple[tuple[Any, ...], dict[str, Any]]]):
+    def _run_1f1b(
+        self,
+        micro_batches: list[tuple[tuple[Any, ...], dict[str, Any]]],
+        stage_latencies: list[list[float]],
+        stage_memory: list[list[int]],
+    ):
         in_flight: list[Optional[tuple[tuple[Any, ...], dict[str, Any]]]] = [None] * (
             len(self._stages)
         )
@@ -198,7 +206,13 @@ class PipelineModule(Module):
                 payload = in_flight[stage_idx]
                 if payload is None:
                     continue
-                payload = self._execute_stage(stage_idx, self._stages[stage_idx], payload)
+                payload = self._execute_stage(
+                    stage_idx,
+                    self._stages[stage_idx],
+                    payload,
+                    stage_latencies,
+                    stage_memory,
+                )
                 if stage_idx == len(self._stages) - 1:
                     outputs.append(self._denormalize(payload))
                 else:
@@ -221,6 +235,8 @@ class PipelineModule(Module):
         stage_idx: int,
         spec: _StageSpec,
         payload: tuple[tuple[Any, ...], dict[str, Any]],
+        stage_latencies: list[list[float]],
+        stage_memory: list[list[int]],
     ) -> tuple[tuple[Any, ...], dict[str, Any]]:
         args, kwargs = payload
         moved_args = self._move_to_device(args, spec.device)
@@ -229,8 +245,8 @@ class PipelineModule(Module):
         output = spec.modules(*moved_args, **moved_kwargs)
         latency = time.perf_counter() - start
         normalized = self._normalize_output(output)
-        self._stage_latencies[stage_idx].append(latency)
-        self._stage_memory[stage_idx].append(self._estimate_bytes(normalized))
+        stage_latencies[stage_idx].append(latency)
+        stage_memory[stage_idx].append(self._estimate_bytes(normalized))
         self._communicate(stage_idx, normalized)
         if self.activation_checkpoint:
             normalized = self._checkpoint_payload(stage_idx, normalized, spec)
