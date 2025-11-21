@@ -1247,6 +1247,9 @@ def backward_split(grad_output, input_ref, **metadata):
                 shared_state = metadata.get('shared_state', {})
 
                 grad_data = shared_state.get('buffer')
+                if grad_data is None:
+                        grad_data = backend.zeros_like(input_tensor.data)
+                        shared_state['buffer'] = grad_data
 
                 if isinstance(grad_output, (list, tuple)):
                         for idx, g in enumerate(grad_output):
@@ -1273,7 +1276,7 @@ def backward_split(grad_output, input_ref, **metadata):
                 shared_state['completed'] = shared_state.get('completed', 0) + 1
 
                 grad_tensor = None
-                if shared_state.get('completed', 0) >= shared_state.get('num_chunks', 1) and grad_data is not None:
+                if shared_state.get('completed', 0) >= shared_state.get('num_chunks', 1):
                         grad_tensor = type(input_tensor).__new__(type(input_tensor))
                         grad_tensor._backend = backend
                         grad_tensor._dtype = input_tensor._dtype
