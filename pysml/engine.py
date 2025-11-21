@@ -1165,7 +1165,7 @@ def where(condition, x, y):
         result_data = backend.where(condition_data, x_data, y_data)
         
         out = Tensor.__new__(Tensor)
-        out._requires_grad = False  # Conditional - difficult to handle
+        out._requires_grad = _requires_grad(x) or _requires_grad(y)
         out._grad = None
         out._grad_fn = None
         out._dtype = x._dtype if hasattr(x, '_dtype') else (y._dtype if hasattr(y, '_dtype') else None)
@@ -1173,6 +1173,12 @@ def where(condition, x, y):
         out.device = x.device if hasattr(x, 'device') else (y.device if hasattr(y, 'device') else None)
         out.active_device = x.active_device if hasattr(x, 'active_device') else (y.active_device if hasattr(y, 'active_device') else 'cpu')
         out.data = result_data
+
+        _attach_grad_fn(
+                out,
+                backward_where,
+                [condition if hasattr(condition, '_requires_grad') else None, x, y],
+        )
         return out
 
 

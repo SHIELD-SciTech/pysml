@@ -11,6 +11,7 @@ autograd engine.
 from __future__ import annotations
 
 import gc
+import threading
 import weakref
 from functools import lru_cache
 from collections.abc import Sequence
@@ -34,6 +35,7 @@ class Tensor:
         instance._grad = None
         instance._requires_grad = False
         instance._version = 0
+        instance._grad_lock = threading.Lock()
         return instance
 
     __slots__ = (
@@ -47,6 +49,7 @@ class Tensor:
         "active_device",
         "_version",
         "_post_backward_hooks",
+        "_grad_lock",
         "__weakref__",
     )
 
@@ -61,6 +64,7 @@ class Tensor:
         self._grad = None
         self._grad_fn = None
         self._version = 0
+        self._grad_lock = threading.Lock()
 
         self._dtype = dtype or DEFAULT_DTYPE
         backend, device_index, device_string = self._resolve_backend(device)
@@ -221,25 +225,26 @@ class Tensor:
                 if not isinstance(grad_value, Tensor):
                     grad_value = input_tensor._new_like(grad_value, requires_grad=False)
 
-                if input_tensor._grad is None:
-                    input_tensor._grad = grad_value
-                else:
-                    backend = input_tensor._backend
-                    grad_buffer = getattr(input_tensor._grad, "data", input_tensor._grad)
-                    increment = getattr(grad_value, "data", grad_value)
-
-                    if hasattr(backend, "add_"):
-                        backend.add_(grad_buffer, increment)
+                with input_tensor._grad_lock:
+                    if input_tensor._grad is None:
+                        input_tensor._grad = grad_value
                     else:
-                        backend.add(
-                            grad_buffer,
-                            increment,
-                            out=grad_buffer,
-                        )
+                        backend = input_tensor._backend
+                        grad_buffer = getattr(input_tensor._grad, "data", input_tensor._grad)
+                        increment = getattr(grad_value, "data", grad_value)
 
-                    if not hasattr(input_tensor._grad, "data"):
-                        # ``_grad`` stored raw backend data; keep the updated buffer wrapped
-                        input_tensor._grad = input_tensor._new_like(grad_buffer, requires_grad=False)
+                        if hasattr(backend, "add_"):
+                            backend.add_(grad_buffer, increment)
+                        else:
+                            backend.add(
+                                grad_buffer,
+                                increment,
+                                out=grad_buffer,
+                            )
+
+                        if not hasattr(input_tensor._grad, "data"):
+                            # ``_grad`` stored raw backend data; keep the updated buffer wrapped
+                            input_tensor._grad = input_tensor._new_like(grad_buffer, requires_grad=False)
 
                 input_tensor._run_post_backward_hooks()
 

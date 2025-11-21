@@ -100,6 +100,16 @@ def _expand_grad_for_reduction(grad_output, input_shape, axis, keepdims, backend
         return backend.broadcast_to(grad_data, input_shape)
 
 
+def _wrap_grad_tensor(grad_data, reference: Tensor):
+        """Create a gradient tensor matching ``reference`` without manual instantiation."""
+
+        if reference is None:
+                return grad_data
+
+        payload = grad_data.data if hasattr(grad_data, 'data') else grad_data
+        return reference._new_like(payload, requires_grad=False)
+
+
 
 def backward_add(grad_output, input_ref, other_ref, **metadata):
         """
@@ -119,17 +129,7 @@ def backward_add(grad_output, input_ref, other_ref, **metadata):
                 if hasattr(grad_output, 'shape') and hasattr(input_tensor, 'shape'):
                         grad_data = _reduce_grad_to_shape(grad_data, input_tensor.shape, backend or input_tensor._backend)
 
-                grad_tensor = grad_output
-                if hasattr(grad_output, '_backend'):
-                        grad_tensor = type(grad_output).__new__(type(grad_output))
-                        grad_tensor._backend = backend or input_tensor._backend
-                        grad_tensor._dtype = getattr(grad_output, '_dtype', None)
-                        grad_tensor.device = getattr(grad_output, 'device', None)
-                        grad_tensor.active_device = getattr(grad_output, 'active_device', 'cpu')
-                        grad_tensor.data = grad_data
-                        grad_tensor._requires_grad = False
-                        grad_tensor._grad = None
-                        grad_tensor._grad_fn = None
+                grad_tensor = _wrap_grad_tensor(grad_data, input_tensor)
 
                 grads.append((input_tensor, grad_tensor))
         else:
@@ -139,22 +139,15 @@ def backward_add(grad_output, input_ref, other_ref, **metadata):
         other_tensor = other_ref() if other_ref else None
         if other_tensor and other_tensor._requires_grad:
                 grad_data = grad_output.data if hasattr(grad_output, 'data') else grad_output
+                alpha = metadata.get('alpha', 1)
                 if hasattr(grad_output, 'shape') and hasattr(other_tensor, 'shape'):
                         grad_data = _reduce_grad_to_shape(grad_data, other_tensor.shape, backend or other_tensor._backend)
 
-                if hasattr(grad_output, '_backend'):
-                        grad_reduced = type(grad_output).__new__(type(grad_output))
-                        grad_reduced._backend = backend or other_tensor._backend
-                        grad_reduced._dtype = getattr(grad_output, '_dtype', None)
-                        grad_reduced.device = getattr(grad_output, 'device', None)
-                        grad_reduced.active_device = getattr(grad_output, 'active_device', 'cpu')
-                        grad_reduced.data = grad_data
-                        grad_reduced._requires_grad = False
-                        grad_reduced._grad = None
-                        grad_reduced._grad_fn = None
-                        grad = grad_reduced
-                else:
-                        grad = grad_data
+                if alpha != 1:
+                        backend_for_scale = backend or other_tensor._backend
+                        grad_data = backend_for_scale.multiply(grad_data, alpha)
+
+                grad = _wrap_grad_tensor(grad_data, other_tensor)
 
                 grads.append((other_tensor, grad))
         else:
@@ -182,17 +175,9 @@ def backward_subtract(grad_output, input_ref, other_ref, **metadata):
         if other_tensor and other_tensor._requires_grad:
                 backend = grad_output._backend if hasattr(grad_output, '_backend') else None
                 if backend:
-                        grad = type(grad_output).__new__(type(grad_output))
-                        grad._backend = backend
-                        grad._dtype = grad_output._dtype
-                        grad.device = grad_output.device
-                        grad.active_device = grad_output.active_device
-                        grad.data = backend.negative(grad_output.data)
-                        grad._requires_grad = False
-                        grad._grad = None
-                        grad._grad_fn = None
+                        grad = _wrap_grad_tensor(backend.negative(grad_output.data), other_tensor)
                 else:
-                        grad = grad_output
+                        grad = _wrap_grad_tensor(grad_output, other_tensor)
                 grads.append((other_tensor, grad))
         else:
                 grads.append(None)
@@ -220,30 +205,15 @@ def backward_multiply(grad_output, input_ref, other_ref, **metadata):
                         grad_data = active_backend.multiply(grad_output.data, other_tensor.data)
                         grad_data = _reduce_grad_to_shape(grad_data, input_tensor.shape, active_backend)
 
-                        grad = type(grad_output).__new__(type(grad_output))
-                        grad._backend = active_backend
-                        grad._dtype = grad_output._dtype
-                        grad.device = grad_output.device
-                        grad.active_device = grad_output.active_device
-                        grad.data = grad_data
-                        grad._requires_grad = False
-                        grad._grad = None
-                        grad._grad_fn = None
+                        grad = _wrap_grad_tensor(grad_data, input_tensor)
                         grads.append((input_tensor, grad))
                 else:
                         # other is a scalar
                         scalar = metadata.get('other_scalar', 1.0)
                         active_backend = backend or input_tensor._backend
-                        grad = type(grad_output).__new__(type(grad_output))
-                        grad._backend = active_backend
-                        grad._dtype = grad_output._dtype
-                        grad.device = grad_output.device
-                        grad.active_device = grad_output.active_device
-                        grad.data = active_backend.multiply(grad_output.data, scalar)
-                        grad.data = _reduce_grad_to_shape(grad.data, input_tensor.shape, active_backend)
-                        grad._requires_grad = False
-                        grad._grad = None
-                        grad._grad_fn = None
+                        grad_data = active_backend.multiply(grad_output.data, scalar)
+                        grad_data = _reduce_grad_to_shape(grad_data, input_tensor.shape, active_backend)
+                        grad = _wrap_grad_tensor(grad_data, input_tensor)
                         grads.append((input_tensor, grad))
         else:
                 grads.append(None)
@@ -251,16 +221,9 @@ def backward_multiply(grad_output, input_ref, other_ref, **metadata):
         if other_tensor and other_tensor._requires_grad:
                 # dL/dy = grad_output * input
                 active_backend = backend or input_tensor._backend
-                grad = type(grad_output).__new__(type(grad_output))
-                grad._backend = active_backend
-                grad._dtype = grad_output._dtype
-                grad.device = grad_output.device
-                grad.active_device = grad_output.active_device
-                grad.data = active_backend.multiply(grad_output.data, input_tensor.data)
-                grad.data = _reduce_grad_to_shape(grad.data, other_tensor.shape, active_backend)
-                grad._requires_grad = False
-                grad._grad = None
-                grad._grad_fn = None
+                grad_data = active_backend.multiply(grad_output.data, input_tensor.data)
+                grad_data = _reduce_grad_to_shape(grad_data, other_tensor.shape, active_backend)
+                grad = _wrap_grad_tensor(grad_data, other_tensor)
                 grads.append((other_tensor, grad))
         else:
                 grads.append(None)
@@ -299,16 +262,9 @@ def backward_divide(grad_output, input_ref, other_ref, **metadata):
                 else:
                         scalar = metadata.get('other_scalar', 1.0)
                         active_backend = backend or input_tensor._backend
-                        grad = type(grad_output).__new__(type(grad_output))
-                        grad._backend = active_backend
-                        grad._dtype = grad_output._dtype
-                        grad.device = grad_output.device
-                        grad.active_device = grad_output.active_device
-                        grad.data = active_backend.divide(grad_output.data, scalar)
-                        grad.data = _reduce_grad_to_shape(grad.data, input_tensor.shape, active_backend)
-                        grad._requires_grad = False
-                        grad._grad = None
-                        grad._grad_fn = None
+                        grad_data = active_backend.divide(grad_output.data, scalar)
+                        grad_data = _reduce_grad_to_shape(grad_data, input_tensor.shape, active_backend)
+                        grad = _wrap_grad_tensor(grad_data, input_tensor)
                         grads.append((input_tensor, grad))
         else:
                 grads.append(None)
@@ -316,12 +272,6 @@ def backward_divide(grad_output, input_ref, other_ref, **metadata):
         if other_tensor and other_tensor._requires_grad:
                 # dL/dy = -grad_output * input / other^2
                 active_backend = backend or other_tensor._backend
-                grad = type(grad_output).__new__(type(grad_output))
-                grad._backend = active_backend
-                grad._dtype = grad_output._dtype
-                grad.device = grad_output.device
-                grad.active_device = grad_output.active_device
-
                 # -grad_output * input
                 temp = active_backend.multiply(grad_output.data, input_tensor.data)
                 temp = active_backend.negative(temp)
@@ -330,11 +280,9 @@ def backward_divide(grad_output, input_ref, other_ref, **metadata):
                 other_squared = active_backend.multiply(other_tensor.data, other_tensor.data)
 
                 # final gradient
-                grad.data = active_backend.divide(temp, other_squared)
-                grad.data = _reduce_grad_to_shape(grad.data, other_tensor.shape, active_backend)
-                grad._requires_grad = False
-                grad._grad = None
-                grad._grad_fn = None
+                grad_data = active_backend.divide(temp, other_squared)
+                grad_data = _reduce_grad_to_shape(grad_data, other_tensor.shape, active_backend)
+                grad = _wrap_grad_tensor(grad_data, other_tensor)
                 grads.append((other_tensor, grad))
         else:
                 grads.append(None)
@@ -355,24 +303,16 @@ def backward_power(grad_output, input_ref, **metadata):
         if input_tensor and input_tensor._requires_grad:
                 backend = grad_output._backend
                 exponent = metadata.get('exponent', 2.0)
-                
+
                 # n * x^(n-1)
-                grad = type(grad_output).__new__(type(grad_output))
-                grad._backend = backend
-                grad._dtype = grad_output._dtype
-                grad.device = grad_output.device
-                grad.active_device = grad_output.active_device
-                
                 # x^(n-1)
                 x_pow = backend.power(input_tensor.data, exponent - 1)
                 # n * x^(n-1)
                 x_pow = backend.multiply(x_pow, exponent)
                 # grad_output * n * x^(n-1)
-                grad.data = backend.multiply(grad_output.data, x_pow)
-                grad._requires_grad = False
-                grad._grad = None
-                grad._grad_fn = None
-                
+                grad_data = backend.multiply(grad_output.data, x_pow)
+                grad = _wrap_grad_tensor(grad_data, input_tensor)
+
                 grads.append((input_tensor, grad))
         else:
                 grads.append(None)
@@ -395,18 +335,11 @@ def backward_matmul(grad_output, input_ref, other_ref, **metadata):
         if input_tensor and input_tensor._requires_grad:
                 # dL/dX = grad_output @ other^T
                 backend = grad_output._backend
-                grad = type(grad_output).__new__(type(grad_output))
-                grad._backend = backend
-                grad._dtype = grad_output._dtype
-                grad.device = grad_output.device
-                grad.active_device = grad_output.active_device
-                
+
                 other_T = backend.transpose(other_tensor.data)
-                grad.data = backend.matmul(grad_output.data, other_T)
-                grad._requires_grad = False
-                grad._grad = None
-                grad._grad_fn = None
-                
+                grad_data = backend.matmul(grad_output.data, other_T)
+                grad = _wrap_grad_tensor(grad_data, input_tensor)
+
                 grads.append((input_tensor, grad))
         else:
                 grads.append(None)
@@ -414,18 +347,11 @@ def backward_matmul(grad_output, input_ref, other_ref, **metadata):
         if other_tensor and other_tensor._requires_grad:
                 # dL/dY = input^T @ grad_output
                 backend = grad_output._backend
-                grad = type(grad_output).__new__(type(grad_output))
-                grad._backend = backend
-                grad._dtype = grad_output._dtype
-                grad.device = grad_output.device
-                grad.active_device = grad_output.active_device
-                
+
                 input_T = backend.transpose(input_tensor.data)
-                grad.data = backend.matmul(input_T, grad_output.data)
-                grad._requires_grad = False
-                grad._grad = None
-                grad._grad_fn = None
-                
+                grad_data = backend.matmul(input_T, grad_output.data)
+                grad = _wrap_grad_tensor(grad_data, other_tensor)
+
                 grads.append((other_tensor, grad))
         else:
                 grads.append(None)
@@ -445,20 +371,13 @@ def backward_relu(grad_output, input_ref, **metadata):
         
         if input_tensor and input_tensor._requires_grad:
                 backend = grad_output._backend
-                grad = type(grad_output).__new__(type(grad_output))
-                grad._backend = backend
-                grad._dtype = grad_output._dtype
-                grad.device = grad_output.device
-                grad.active_device = grad_output.active_device
-                
+
                 # Mask where input > 0
                 mask = backend.greater(input_tensor.data, 0)
                 # grad_output * mask
-                grad.data = backend.where(mask, grad_output.data, 0)
-                grad._requires_grad = False
-                grad._grad = None
-                grad._grad_fn = None
-                
+                grad_data = backend.where(mask, grad_output.data, 0)
+                grad = _wrap_grad_tensor(grad_data, input_tensor)
+
                 grads.append((input_tensor, grad))
         else:
                 grads.append(None)
@@ -511,20 +430,13 @@ def backward_log(grad_output, input_ref, **metadata):
         
         if input_tensor and input_tensor._requires_grad:
                 backend = grad_output._backend
-                grad = type(grad_output).__new__(type(grad_output))
-                grad._backend = backend
-                grad._dtype = grad_output._dtype
-                grad.device = grad_output.device
-                grad.active_device = grad_output.active_device
-                
+
                 # 1/x
                 inv_x = backend.reciprocal(input_tensor.data)
                 # grad_output / x
-                grad.data = backend.multiply(grad_output.data, inv_x)
-                grad._requires_grad = False
-                grad._grad = None
-                grad._grad_fn = None
-                
+                grad_data = backend.multiply(grad_output.data, inv_x)
+                grad = _wrap_grad_tensor(grad_data, input_tensor)
+
                 grads.append((input_tensor, grad))
         else:
                 grads.append(None)
@@ -544,11 +456,6 @@ def backward_tanh(grad_output, input_ref, **metadata):
 
         if input_tensor and input_tensor._requires_grad:
                 backend = grad_output._backend
-                grad = type(grad_output).__new__(type(grad_output))
-                grad._backend = backend
-                grad._dtype = grad_output._dtype
-                grad.device = grad_output.device
-                grad.active_device = grad_output.active_device
 
                 # Prefer using saved output to avoid recomputation.
                 tanh_output = metadata.get('output')
@@ -562,11 +469,9 @@ def backward_tanh(grad_output, input_ref, **metadata):
                 tanh_squared = backend.multiply(grad_input, grad_input)
                 grad_tanh = backend.subtract(1.0, tanh_squared)
                 # grad_output * (1 - tanh^2(x))
-                grad.data = backend.multiply(grad_output.data, grad_tanh)
-                grad._requires_grad = False
-                grad._grad = None
-                grad._grad_fn = None
-                
+                grad_data = backend.multiply(grad_output.data, grad_tanh)
+                grad = _wrap_grad_tensor(grad_data, input_tensor)
+
                 grads.append((input_tensor, grad))
         else:
                 grads.append(None)
@@ -586,57 +491,12 @@ def backward_sum(grad_output, input_ref, **metadata):
 
     if input_tensor and input_tensor._requires_grad:
         backend = grad_output._backend if hasattr(grad_output, '_backend') else input_tensor._backend
-        grad = type(input_tensor).__new__(type(input_tensor))
-        grad._backend = backend
-        grad._dtype = input_tensor._dtype
-        grad.device = input_tensor.device
-        grad.active_device = input_tensor.active_device
 
         axis = metadata.get('axis', None)
         keepdims = metadata.get('keepdims', False)
         grad_data = _expand_grad_for_reduction(grad_output, input_tensor.shape, axis, keepdims, backend)
 
-        grad._requires_grad = False
-        grad._grad = None
-        grad._grad_fn = None
-        grad.data = grad_data
-
-        grads.append((input_tensor, grad))
-    else:
-        grads.append(None)
-
-    return grads
-
-
-def backward_mean(grad_output, input_ref, **metadata):
-    """
-    Backward for mean: z = mean(x)
-
-    dL/dx = dL/dz * (1/n) broadcast to the input shape.
-    """
-    grads = []
-
-    input_tensor = input_ref() if input_ref else None
-
-    if input_tensor and input_tensor._requires_grad:
-        backend = grad_output._backend if hasattr(grad_output, '_backend') else input_tensor._backend
-        n = metadata.get('n')
-        axis = metadata.get('axis', None)
-        keepdims = metadata.get('keepdims', False)
-
-        grad_data = grad_output.data if hasattr(grad_output, 'data') else grad_output
-        grad_data = backend.divide(grad_data, n)
-        grad_data = _expand_grad_for_reduction(grad_data, input_tensor.shape, axis, keepdims, backend)
-
-        grad = type(input_tensor).__new__(type(input_tensor))
-        grad._backend = backend
-        grad._dtype = input_tensor._dtype
-        grad.device = input_tensor.device
-        grad.active_device = input_tensor.active_device
-        grad.data = grad_data
-        grad._requires_grad = False
-        grad._grad = None
-        grad._grad_fn = None
+        grad = _wrap_grad_tensor(grad_data, input_tensor)
 
         grads.append((input_tensor, grad))
     else:
@@ -656,31 +516,24 @@ def backward_transpose(grad_output, input_ref, **metadata):
         grads = []
         
         input_tensor = input_ref() if input_ref else None
-        
+
         if input_tensor and input_tensor._requires_grad:
                 backend = grad_output._backend
-                grad = type(grad_output).__new__(type(grad_output))
-                grad._backend = backend
-                grad._dtype = grad_output._dtype
-                grad.device = grad_output.device
-                grad.active_device = grad_output.active_device
-                
+
                 # Transpose the gradient back
                 axes = metadata.get('axes', None)
                 if axes is None:
                         # Simple transpose - reverse all axes
-                        grad.data = backend.transpose(grad_output.data)
+                        grad_data = backend.transpose(grad_output.data)
                 else:
                         # Inverse permutation for axes
                         inv_axes = [0] * len(axes)
                         for i, ax in enumerate(axes):
                                 inv_axes[ax] = i
-                        grad.data = backend.transpose(grad_output.data, inv_axes)
-                
-                grad._requires_grad = False
-                grad._grad = None
-                grad._grad_fn = None
-                
+                        grad_data = backend.transpose(grad_output.data, inv_axes)
+
+                grad = _wrap_grad_tensor(grad_data, input_tensor)
+
                 grads.append((input_tensor, grad))
         else:
                 grads.append(None)
