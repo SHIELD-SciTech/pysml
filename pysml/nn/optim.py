@@ -217,7 +217,6 @@ class Adam(Optimizer):
                                 # Initialize state
                                 param_state = self.state.get(id(p), {})
                                 self._ensure_state_device(param_state, p)
-                                self._ensure_state_device(param_state, p)
                                 
                                 if len(param_state) == 0:
                                         param_state['step'] = 0
