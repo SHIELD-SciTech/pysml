@@ -17,19 +17,6 @@ except ImportError:
 
 precision_map = {"fp32": "float32", "fp16": "float16", "bf16": "bfloat16"}
 precision = precision_map
-
-
-def rand(shape, device=None, backend="level_zero"):
-        if AVAILABLE and hasattr(ng.random, "rand"):
-                if device is not None and "xpu" in str(device):
-                        target = str(device).split(":")[1]
-                        return ng.random.rand(*shape, device=f"{backend}:gpu:{target}")
-                return ng.random.rand(*shape)
-
-        import numpy as _np
-        return _np.random.rand(*shape)
-
-
 def convert(data, dtype, device=None, backend="level_zero"):
         dtype_key = getattr(dtype, "precision", getattr(dtype, "precission", None))
         target_dtype = precision_map[dtype_key]

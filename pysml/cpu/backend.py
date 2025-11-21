@@ -5,11 +5,6 @@ AVAILABLE = True
 precision_map = {"fp32": "float32", "fp16": "float16", "bf16": "float16"}
 precision = precision_map
 
-
-def rand(shape, device=None):
-        """Generate random numbers in [0, 1) using NumPy's RNG."""
-        return np.random.rand(*shape)
-
 def convert(data, dtype, device=None):
 	# Convert from GPU backends to CPU
 	if hasattr(data, 'get'):  # CuPy array
