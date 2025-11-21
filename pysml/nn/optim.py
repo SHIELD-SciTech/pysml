@@ -324,7 +324,6 @@ class Adam(Optimizer):
 
                                 self.state[id(p)] = param_state
                                 self._maybe_offload_state(param_state, p)
-                                self._maybe_offload_state(param_state, p)
 
 
 class AdamW(Optimizer):

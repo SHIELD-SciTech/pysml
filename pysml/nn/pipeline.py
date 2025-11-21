@@ -24,7 +24,14 @@ class _StageSpec:
 
 
 class PipelineModule(Module):
-    """Partition a sequential module graph into pipeline stages."""
+    """Partition a sequential module graph into pipeline stages.
+
+    Warning: Modules used in pipeline parallel schedules must be stateless
+    with respect to their inputs. Avoid in-place operations (for example,
+    ``+=`` or ``.add_()``) on tensors that are fed into a pipeline stage,
+    because activation checkpointing will re-run the forward pass and expect
+    unmodified inputs when computing gradients.
+    """
 
     def __init__(
         self,
@@ -249,7 +256,13 @@ class PipelineModule(Module):
     def _collect_tensors(self, payload: tuple[tuple[Any, ...], dict[str, Any]]) -> list[Tensor]:
         tensors: list[Tensor] = []
 
+        seen: set[int] = set()
+
         def _collect(obj: Any) -> None:
+            obj_id = id(obj)
+            if obj_id in seen:
+                return
+            seen.add(obj_id)
             if isinstance(obj, Tensor):
                 tensors.append(obj)
             elif isinstance(obj, tuple) or isinstance(obj, list):
@@ -265,17 +278,30 @@ class PipelineModule(Module):
             _collect(value)
         return tensors
 
-    def _move_to_device(self, obj: Any, device: Optional[str]) -> Any:
+    def _move_to_device(self, obj: Any, device: Optional[str], _seen: Optional[dict[int, Any]] = None) -> Any:
         if device is None:
             return obj
+        if _seen is None:
+            _seen = {}
+        obj_id = id(obj)
+        if obj_id in _seen:
+            return _seen[obj_id]
         if isinstance(obj, Tensor):
-            return obj.to(device)
+            moved = obj.to(device)
+            _seen[obj_id] = moved
+            return moved
         if isinstance(obj, tuple):
-            return tuple(self._move_to_device(item, device) for item in obj)
+            moved_tuple = tuple(self._move_to_device(item, device, _seen) for item in obj)
+            _seen[obj_id] = moved_tuple
+            return moved_tuple
         if isinstance(obj, list):
-            return [self._move_to_device(item, device) for item in obj]
+            moved_list = [self._move_to_device(item, device, _seen) for item in obj]
+            _seen[obj_id] = moved_list
+            return moved_list
         if isinstance(obj, dict):
-            return {k: self._move_to_device(v, device) for k, v in obj.items()}
+            moved_dict = {k: self._move_to_device(v, device, _seen) for k, v in obj.items()}
+            _seen[obj_id] = moved_dict
+            return moved_dict
         return obj
 
     def _normalize_output(
@@ -300,7 +326,13 @@ class PipelineModule(Module):
 
         stage_inputs: list[Optional[Tensor]] = []
 
+        seen_inputs: set[int] = set()
+
         def _collect_inputs(obj: Any) -> None:
+            obj_id = id(obj)
+            if obj_id in seen_inputs:
+                return
+            seen_inputs.add(obj_id)
             if isinstance(obj, Tensor):
                 stage_inputs.append(obj if obj._requires_grad else None)
             elif isinstance(obj, (tuple, list)):
@@ -373,22 +405,35 @@ class PipelineModule(Module):
             wrapped.data = tensor.data
             return wrapped
 
+        seen_wrap: dict[int, Any] = {}
+
         def _wrap(obj: Any, path: list[tuple[str, Any]]):
+            obj_id = id(obj)
+            if obj_id in seen_wrap:
+                return seen_wrap[obj_id]
             if isinstance(obj, Tensor):
-                return _wrap_tensor(obj, path)
+                wrapped_tensor = _wrap_tensor(obj, path)
+                seen_wrap[obj_id] = wrapped_tensor
+                return wrapped_tensor
             if isinstance(obj, tuple):
-                return tuple(
+                wrapped_tuple = tuple(
                     _wrap(item, path + [("tuple", idx)]) for idx, item in enumerate(obj)
                 )
+                seen_wrap[obj_id] = wrapped_tuple
+                return wrapped_tuple
             if isinstance(obj, list):
-                return [
+                wrapped_list = [
                     _wrap(item, path + [("list", idx)]) for idx, item in enumerate(obj)
                 ]
+                seen_wrap[obj_id] = wrapped_list
+                return wrapped_list
             if isinstance(obj, dict):
-                return {
+                wrapped_dict = {
                     key: _wrap(value, path + [("dict", key)])
                     for key, value in obj.items()
                 }
+                seen_wrap[obj_id] = wrapped_dict
+                return wrapped_dict
             return obj
 
         wrapped_args = tuple(_wrap(arg, [("args", idx)]) for idx, arg in enumerate(args))

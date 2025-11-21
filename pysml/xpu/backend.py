@@ -433,23 +433,23 @@ def group_norm(x, num_groups, weight=None, bias=None, eps=1e-5, out=None):
 
 
 def dropout(x, p=0.5, training=True):
-	if not training or p == 0:
-		return None, x
-	
-	keep_prob = 1.0 - p
-	
-	# XPU random generation with fallback
-	if AVAILABLE and hasattr(ng.random, 'rand'):
-		mask = ng.random.rand(*x.shape) > p
-		output = ng.where(mask, x * (1.0 / keep_prob), 0)
-		return mask.astype(x.dtype), output
-	else:
-		# Fallback to NumPy (on CPU then transfer)
-		import numpy as np
-		mask_np = np.random.rand(*x.shape) > p
-		mask = ng.asarray(mask_np)
-		output = ng.where(mask, x * (1.0 / keep_prob), 0)
-		return mask.astype(x.dtype), output
+        if not training or p == 0:
+                return None, x
+
+        keep_prob = 1.0 - p
+
+        # XPU random generation with fallback
+        if AVAILABLE and hasattr(ng.random, 'rand'):
+                mask = rand(x.shape, device=getattr(x, "device", None)) > p
+                output = ng.where(mask, x * (1.0 / keep_prob), 0)
+                return mask.astype(x.dtype), output
+        else:
+                # Fallback to NumPy (on CPU then transfer)
+                import numpy as np
+                mask_np = rand(x.shape) > p
+                mask = ng.asarray(mask_np)
+                output = ng.where(mask, x * (1.0 / keep_prob), 0)
+                return mask.astype(x.dtype), output
 
 
 def embedding_lookup(table, indices, padding_idx=None):

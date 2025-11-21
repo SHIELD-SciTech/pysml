@@ -1462,10 +1462,15 @@ def group_norm(input, num_groups, weight=None, bias=None, eps=1e-5):
 
 def dropout(input, p=0.5, training=True, out=None):
         backend = input._backend
-        
+
         if out is None:
                 if training and p > 0:
-                        mask, result_data = backend.dropout(input.data, p, training)
+                        keep_prob = 1.0 - p
+                        rand = backend.rand(input.shape, device=input.device)
+                        mask = backend.greater(rand, p)
+                        mask = backend.astype(mask, input.data.dtype)
+                        scaled_mask = backend.divide(mask, keep_prob)
+                        result_data = backend.multiply(input.data, scaled_mask)
                 else:
                         mask = None
                         result_data = input.data
@@ -1486,10 +1491,15 @@ def dropout(input, p=0.5, training=True, out=None):
                         )
         else:
                 if training and p > 0:
-                        _, out.data = backend.dropout(input.data, p, training)
+                        keep_prob = 1.0 - p
+                        rand = backend.rand(input.shape, device=input.device)
+                        mask = backend.greater(rand, p)
+                        mask = backend.astype(mask, input.data.dtype)
+                        scaled_mask = backend.divide(mask, keep_prob)
+                        out.data = backend.multiply(input.data, scaled_mask)
                 else:
                         out.data = input.data
-        
+
         return out
 
 

@@ -387,14 +387,14 @@ def group_norm(x, num_groups, weight=None, bias=None, eps=1e-5, out=None):
 
 
 def dropout(x, p=0.5, training=True):
-	if not training or p == 0:
-		return None, x
-	
-	keep_prob = 1.0 - p
-	# Efficient boolean mask
-	mask = np.random.rand(*x.shape) > p
-	# Single-pass: mask + scale (saves temporary array)
-	output = np.where(mask, x * (1.0 / keep_prob), 0)
+        if not training or p == 0:
+                return None, x
+
+        keep_prob = 1.0 - p
+        # Efficient boolean mask using backend RNG
+        mask = rand(x.shape) > p
+        # Single-pass: mask + scale (saves temporary array)
+        output = np.where(mask, x * (1.0 / keep_prob), 0)
 	
 	return mask.astype(x.dtype), output
 

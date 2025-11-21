@@ -10,14 +10,31 @@ class Dropout(Module):
 		self.p = p
 		self.inplace = inplace
 	
-	def forward(self, x):
-		from .. import engine
-		
-		# Only apply dropout during training
-		if not self.training or self.p == 0:
-			return x
-		
-		return engine.dropout(x, p=self.p, training=True)
+        def forward(self, x):
+                # Only apply dropout during training
+                if not self.training or self.p == 0:
+                        return x
+
+                from .. import engine
+                backend = x._backend
+
+                rand = backend.rand(x.shape, device=x.device)
+                mask = backend.greater(rand, self.p)
+                mask = backend.astype(mask, x.data.dtype)
+                mask = backend.divide(mask, 1.0 - self.p)
+
+                from .. import Tensor
+
+                mask_tensor = Tensor.__new__(Tensor)
+                mask_tensor._backend = backend
+                mask_tensor._dtype = x._dtype
+                mask_tensor.device = x.device
+                mask_tensor.active_device = x.active_device
+                mask_tensor.data = mask
+                mask_tensor._requires_grad = False
+                mask_tensor._grad = None
+
+                return engine.multiply(x, mask_tensor)
 	
 	def extra_repr(self):
 		return f"p={self.p}" + (", inplace=True" if self.inplace else "")

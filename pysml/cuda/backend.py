@@ -420,14 +420,14 @@ def group_norm(x, num_groups, weight=None, bias=None, eps=1e-5, out=None):
 
 
 def dropout(x, p=0.5, training=True):
-	if not training or p == 0:
-		return None, x
-	
-	keep_prob = 1.0 - p
-	# GPU random generation (CUDA cuRAND)
-	mask = cp.random.rand(*x.shape) > p
-	# Single-pass GPU operation
-	output = cp.where(mask, x * (1.0 / keep_prob), 0)
+        if not training or p == 0:
+                return None, x
+
+        keep_prob = 1.0 - p
+        # GPU random generation (CUDA cuRAND)
+        mask = rand(x.shape, device=getattr(x, "device", None)) > p
+        # Single-pass GPU operation
+        output = cp.where(mask, x * (1.0 / keep_prob), 0)
 	
 	return mask.astype(x.dtype), output
 
