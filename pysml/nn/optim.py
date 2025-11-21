@@ -129,6 +129,8 @@ class SGD(Optimizer):
                         lr = group['lr']
                         
                         for p in group['params']:
+                                if self._state_sharding_enabled and id(p) not in self._owned_param_ids:
+                                        continue
                                 if p.grad is None:
                                         continue
                                 
@@ -205,6 +207,8 @@ class Adam(Optimizer):
                         amsgrad = group['amsgrad']
                         
                         for p in group['params']:
+                                if self._state_sharding_enabled and id(p) not in self._owned_param_ids:
+                                        continue
                                 if p.grad is None:
                                         continue
                                 
@@ -349,6 +353,8 @@ class AdamW(Optimizer):
                         amsgrad = group['amsgrad']
                         
                         for p in group['params']:
+                                if self._state_sharding_enabled and id(p) not in self._owned_param_ids:
+                                        continue
                                 if p.grad is None:
                                         continue
                                 
@@ -490,6 +496,8 @@ class RMSprop(Optimizer):
                         centered = group['centered']
                         
                         for p in group['params']:
+                                if self._state_sharding_enabled and id(p) not in self._owned_param_ids:
+                                        continue
                                 if p.grad is None:
                                         continue
                                 
