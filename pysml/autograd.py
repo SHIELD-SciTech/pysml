@@ -16,6 +16,12 @@ class Function:
                 self.metadata = metadata or {}
                 self.next_functions = []  # For graph traversal
 
+        def release_graph(self):
+                """Release saved inputs to allow tensors to be garbage collected."""
+
+                self._saved_inputs = None
+                self.next_functions = []
+
         def apply_backward(self, grad_output):
                 try:
                         return self.backward_fn(grad_output, *self.inputs, **self.metadata)
@@ -159,25 +165,36 @@ def backward_add(grad_output, input_ref, other_ref, **metadata):
 def backward_subtract(grad_output, input_ref, other_ref, **metadata):
         """
         Backward for subtraction: z = x - y
-        
+
         dL/dx = dL/dz * 1 = dL/dz
         dL/dy = dL/dz * (-1) = -dL/dz
         """
         grads = []
-        
+
+        backend = grad_output._backend if hasattr(grad_output, '_backend') else None
+
         input_tensor = input_ref() if input_ref else None
         if input_tensor and input_tensor._requires_grad:
-                grads.append((input_tensor, grad_output))
+                grad_data = grad_output.data if hasattr(grad_output, 'data') else grad_output
+                if hasattr(grad_output, 'shape') and hasattr(input_tensor, 'shape'):
+                        grad_data = _reduce_grad_to_shape(grad_data, input_tensor.shape, backend or input_tensor._backend)
+
+                grad = _wrap_grad_tensor(grad_data, input_tensor)
+                grads.append((input_tensor, grad))
         else:
                 grads.append(None)
-        
+
         other_tensor = other_ref() if other_ref else None
         if other_tensor and other_tensor._requires_grad:
-                backend = grad_output._backend if hasattr(grad_output, '_backend') else None
                 if backend:
-                        grad = _wrap_grad_tensor(backend.negative(grad_output.data), other_tensor)
+                        grad_data = backend.negative(grad_output.data)
                 else:
-                        grad = _wrap_grad_tensor(grad_output, other_tensor)
+                        grad_data = -grad_output
+
+                if hasattr(grad_output, 'shape') and hasattr(other_tensor, 'shape'):
+                        grad_data = _reduce_grad_to_shape(grad_data, other_tensor.shape, backend or other_tensor._backend)
+
+                grad = _wrap_grad_tensor(grad_data, other_tensor)
                 grads.append((other_tensor, grad))
         else:
                 grads.append(None)
@@ -338,6 +355,9 @@ def backward_matmul(grad_output, input_ref, other_ref, **metadata):
 
                 other_T = backend.transpose(other_tensor.data)
                 grad_data = backend.matmul(grad_output.data, other_T)
+
+                if hasattr(grad_data, 'shape') and hasattr(input_tensor, 'shape'):
+                        grad_data = _reduce_grad_to_shape(grad_data, input_tensor.shape, backend)
                 grad = _wrap_grad_tensor(grad_data, input_tensor)
 
                 grads.append((input_tensor, grad))
@@ -350,6 +370,9 @@ def backward_matmul(grad_output, input_ref, other_ref, **metadata):
 
                 input_T = backend.transpose(input_tensor.data)
                 grad_data = backend.matmul(input_T, grad_output.data)
+
+                if hasattr(grad_data, 'shape') and hasattr(other_tensor, 'shape'):
+                        grad_data = _reduce_grad_to_shape(grad_data, other_tensor.shape, backend)
                 grad = _wrap_grad_tensor(grad_data, other_tensor)
 
                 grads.append((other_tensor, grad))

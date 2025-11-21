@@ -202,7 +202,25 @@ class Tensor:
                     if input_tensor is not None:
                         stack.append((input_tensor, False))
 
-        self._grad = gradient
+        with self._grad_lock:
+            if self._grad is None:
+                self._grad = gradient
+            else:
+                backend = self._backend
+                grad_buffer = getattr(self._grad, "data", self._grad)
+                increment = getattr(gradient, "data", gradient)
+
+                if hasattr(backend, "add_"):
+                    backend.add_(grad_buffer, increment)
+                else:
+                    backend.add(
+                        grad_buffer,
+                        increment,
+                        out=grad_buffer,
+                    )
+
+                if not hasattr(self._grad, "data"):
+                    self._grad = self._new_like(grad_buffer, requires_grad=False)
 
         for node in reversed(topo_order):
             if node._grad_fn is None:
