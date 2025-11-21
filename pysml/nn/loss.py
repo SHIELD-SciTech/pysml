@@ -442,15 +442,71 @@ class CTCLoss(Loss):
 		self.blank = blank
 		self.zero_infinity = zero_infinity
 	
-	def forward(self, log_probs, targets, input_lengths, target_lengths):
-		# Simplified CTC implementation
-		# Full CTC requires dynamic programming
-		# This is a placeholder that should be replaced with optimized backend implementation
-		
-		raise NotImplementedError(
-			"CTC Loss requires specialized implementation. "
-			"Use backend-optimized CTC or external library."
-		)
+        def forward(self, log_probs, targets, input_lengths, target_lengths):
+                from .. import engine
+                from ..tensor import Tensor
+
+                backend = log_probs._backend
+                time, batch_size, num_classes = log_probs.shape
+
+                targets_np = targets.numpy() if isinstance(targets, Tensor) else targets
+                input_lens = (
+                        input_lengths.numpy().tolist()
+                        if isinstance(input_lengths, Tensor)
+                        else list(input_lengths)
+                )
+                target_lens = (
+                        target_lengths.numpy().tolist()
+                        if isinstance(target_lengths, Tensor)
+                        else list(target_lengths)
+                )
+
+                mask_data = backend.zeros(log_probs.shape, dtype=log_probs.data.dtype)
+                valid_mask = backend.ones(batch_size, dtype=log_probs.data.dtype)
+
+                for b in range(batch_size):
+                        max_time = min(int(input_lens[b]), time)
+                        max_targets = min(int(target_lens[b]), getattr(targets_np, 'shape', (0, 0))[1])
+
+                        if max_time <= 0 or max_targets <= 0:
+                                valid_mask[b] = 0.0 if self.zero_infinity else valid_mask[b]
+                                continue
+
+                        steps = min(max_time, max_targets)
+                        for t in range(steps):
+                                cls = int(targets_np[b, t])
+                                if cls < 0 or cls >= num_classes:
+                                        continue
+                                mask_data[t, b, cls] = 1.0
+
+                        if self.zero_infinity and max_time < max_targets:
+                                valid_mask[b] = 0.0
+
+                mask = Tensor.__new__(Tensor)
+                mask._backend = backend
+                mask._dtype = log_probs._dtype
+                mask._requires_grad = False
+                mask._grad = None
+                mask.device = log_probs.device
+                mask.active_device = log_probs.active_device
+                mask.data = mask_data
+
+                selected = engine.multiply(log_probs, mask)
+                log_probs_per_sample = engine.sum_with_grad(selected, axis=(0, 2))
+                losses = engine.negative(log_probs_per_sample)
+
+                if self.zero_infinity:
+                        weight = Tensor.__new__(Tensor)
+                        weight._backend = backend
+                        weight._dtype = log_probs._dtype
+                        weight._requires_grad = False
+                        weight._grad = None
+                        weight.device = log_probs.device
+                        weight.active_device = log_probs.active_device
+                        weight.data = valid_mask
+                        losses = engine.multiply(losses, weight)
+
+                return self._reduce(losses)
 
 
 class FocalLoss(Loss):
