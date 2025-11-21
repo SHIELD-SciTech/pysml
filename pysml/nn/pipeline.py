@@ -295,6 +295,9 @@ class PipelineModule(Module):
     ) -> tuple[tuple[Any, ...], dict[str, Any]]:
         args, kwargs = payload
 
+        saved_args = args
+        saved_kwargs = kwargs
+
         stage_inputs: list[Optional[Tensor]] = []
 
         def _collect_inputs(obj: Any) -> None:
@@ -310,9 +313,6 @@ class PipelineModule(Module):
         _collect_inputs(args)
         _collect_inputs(kwargs)
 
-        if not any(t is not None for t in stage_inputs):
-            return args, kwargs
-
         def _make_accessor(path: list[tuple[str, Any]]):
             def _access(payload_tree: tuple[tuple[Any, ...], dict[str, Any]]):
                 payload_args, payload_kwargs = payload_tree
@@ -320,43 +320,44 @@ class PipelineModule(Module):
                 node: Any = payload_args if token_type == "args" else payload_kwargs
                 node = node[token_key]
                 for token_type, token_key in path[1:]:
-                    node = node[token_key]
+                    if token_type in {"tuple", "list"}:
+                        node = node[token_key]
+                    else:
+                        node = node[token_key]
                 return node
 
             return _access
 
-        def _checkpoint_backward(grad_output, *input_refs, **metadata):
-            inputs = [ref() if ref is not None else None for ref in input_refs]
-
-            for inp in inputs:
-                if inp is not None:
-                    inp._grad = None
-
-            recomputed = metadata["modules"](*metadata["args"], **metadata["kwargs"])
-            recomputed_payload = self._normalize_output(recomputed)
-            target = metadata["accessor"](recomputed_payload)
-
-            if isinstance(target, Tensor) and grad_output is not None:
-                target.backward(grad_output, retain_graph=False)
-
-            grads = []
-            for inp in inputs:
-                if inp is None:
-                    grads.append(None)
-                else:
-                    grads.append((inp, inp._grad))
-                    inp._grad = None
-            return grads
-
         def _wrap_tensor(tensor: Tensor, path: list[tuple[str, Any]]):
             accessor = _make_accessor(path)
-            metadata = {
-                "modules": spec.modules,
-                "args": args,
-                "kwargs": kwargs,
-                "accessor": accessor,
-            }
-            grad_fn = Function(_checkpoint_backward, stage_inputs, metadata=metadata)
+
+            def _checkpoint_backward(grad_output, *input_refs, **metadata):
+                inputs = [ref() if ref is not None else None for ref in input_refs]
+                for inp in inputs:
+                    if inp is not None:
+                        inp._grad = None
+
+                recomputed = spec.modules(*saved_args, **saved_kwargs)
+                recomputed_payload = self._normalize_output(recomputed)
+                target = metadata["accessor"](recomputed_payload)
+
+                if isinstance(target, Tensor) and grad_output is not None:
+                    target.backward(grad_output, retain_graph=False)
+
+                grads = []
+                for inp in inputs:
+                    if inp is None:
+                        grads.append(None)
+                    else:
+                        grads.append((inp, inp._grad))
+                        inp._grad = None
+                return grads
+
+            grad_fn = Function(
+                _checkpoint_backward,
+                stage_inputs,
+                metadata={"accessor": accessor},
+            )
 
             wrapped = Tensor.__new__(Tensor)
             wrapped._backend = tensor._backend
@@ -372,9 +373,7 @@ class PipelineModule(Module):
 
         def _wrap(obj: Any, path: list[tuple[str, Any]]):
             if isinstance(obj, Tensor):
-                if obj._requires_grad:
-                    return _wrap_tensor(obj, path)
-                return obj
+                return _wrap_tensor(obj, path)
             if isinstance(obj, tuple):
                 return tuple(
                     _wrap(item, path + [("tuple", idx)]) for idx, item in enumerate(obj)
