@@ -5,7 +5,7 @@ AVAILABLE = True
 precision_map = {"fp32": "float32", "fp16": "float16", "bf16": "float16"}
 precision = precision_map
 
-def convert(data, dtype, device=None, shape=None):
+def convert(data, dtype, device=None):
     """Convert from GPU/XPU arrays to CPU and enforce target precision."""
 
     if hasattr(data, 'get'):  # CuPy array

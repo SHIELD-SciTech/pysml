@@ -51,7 +51,6 @@ class Tensor:
         "_post_backward_hooks",
         "_grad_lock",
         "_freed",
-        "_shape",
         "__weakref__",
         "__dict__",
     )
@@ -69,7 +68,6 @@ class Tensor:
         self._version = 0
         self._grad_lock = threading.Lock()
         self._freed = False
-        self._shape = None
 
         self._dtype = dtype or DEFAULT_DTYPE
         backend, device_index, device_string = self._resolve_backend(device)
@@ -454,9 +452,7 @@ class Tensor:
         cloned.active_device = self.active_device
         cloned._version = getattr(self, "_version", 0)
 
-        data_shape = getattr(self.data, "shape", getattr(self, "_shape", None))
-        cloned._shape = data_shape
-
+        data_shape = getattr(self.data, "shape", None)
         buffer = _request_buffer(data_shape, self._dtype, self._backend, self.device)
         if buffer is not None:
             self._backend.copyto(buffer, self.data)
@@ -465,17 +461,9 @@ class Tensor:
             try:
                 cloned.data = self._backend.copy(self.data)
             except Exception:
-                pointer_clone = _clone_pointer_like(
-                    self.data, data_shape, self._dtype, self._backend, self.device
-                )
-                if pointer_clone is not None:
-                    cloned.data = pointer_clone
-                else:
-                    # Fall back to a dtype/device-aware convert path for raw pointers
-                    # (e.g., CuPy MemoryPointer) that lack array semantics.
-                    cloned.data = self._backend.convert(
-                        self.data, self._dtype, device=self.device, shape=data_shape
-                    )
+                # Fall back to a dtype/device-aware convert path for raw pointers
+                # (e.g., CuPy MemoryPointer) that lack array semantics.
+                cloned.data = self._backend.convert(self.data, self._dtype, device=self.device)
         return cloned
 
     # ------------------------------------------------------------------
@@ -697,6 +685,9 @@ def _resolve_backend_dtype(dtype, backend):
 
 
 def _clone_pointer_like(data, shape, dtype, backend, device):
+    if shape is None:
+        return None
+
     if getattr(backend, "BACKEND_NAME", None) != "cuda":
         return None
 
@@ -709,21 +700,14 @@ def _clone_pointer_like(data, shape, dtype, backend, device):
         return None
 
     resolved_dtype = _resolve_backend_dtype(dtype, backend)
-    resolved_shape = shape
-    if resolved_shape is None:
-        try:
-            itemsize = cp.dtype(resolved_dtype).itemsize
-            resolved_shape = (data.mem.size // itemsize,)
-        except Exception:
-            return None
 
     try:
-        view = cp.ndarray(resolved_shape, dtype=resolved_dtype, memptr=data)
+        view = cp.ndarray(shape, dtype=resolved_dtype, memptr=data)
         return backend.copy(view)
     except Exception:
         try:
-            view = cp.ndarray(resolved_shape, dtype=resolved_dtype, memptr=data)
-            return backend.convert(view, dtype, device=device, shape=resolved_shape)
+            view = cp.ndarray(shape, dtype=resolved_dtype, memptr=data)
+            return backend.convert(view, dtype, device=device)
         except Exception:
             return None
 
