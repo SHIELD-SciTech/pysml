@@ -82,6 +82,7 @@ def _wrap_result(template, backend, requires_grad, data):
         out.device = template.device
         out.active_device = template.active_device
         out._version = getattr(template, "_version", 0)
+        out._shape = getattr(pooled, "shape", getattr(data, "shape", getattr(template, "_shape", None)))
         out.data = pooled
         return out
 
@@ -94,6 +95,7 @@ def _prepare_inplace_out(out, template, backend, requires_grad):
         out._backend = backend
         out.device = template.device
         out.active_device = template.active_device
+        out._shape = getattr(out.data, "shape", getattr(template, "_shape", None))
         out._bump_version()
         return out
 

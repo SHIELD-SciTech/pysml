@@ -438,6 +438,7 @@ class Tensor:
         detached.device = self.device
         detached.active_device = self.active_device
         detached.data = self.data
+        detached._shape = getattr(self, "_shape", getattr(self.data, "shape", None))
         return detached
 
     def clone(self) -> "Tensor":
