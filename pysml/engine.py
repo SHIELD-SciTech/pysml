@@ -14,7 +14,7 @@ backward_log, backward_tanh, backward_sum, backward_mean, backward_transpose,
         backward_abs, backward_sign, backward_clip, backward_where,
         backward_maximum, backward_minimum,
     backward_max_reduce, backward_min_reduce,
-    backward_split, backward_getitem,
+    backward_split, backward_getitem, backward_concatenate,
 )
 import builtins
 import gc
@@ -58,6 +58,8 @@ _BUFFER_POOL = get_buffer_pool()
 def _maybe_allocate_buffer(shape, dtype, backend, device):
         if shape is None:
                 return None
+        if getattr(backend, "BACKEND_NAME", None) == "cpu":
+                return None
         try:
                 return _BUFFER_POOL.get_buffer(shape, dtype, backend, device)
         except Exception:
@@ -80,6 +82,7 @@ def _wrap_result(template, backend, requires_grad, data):
         out.device = template.device
         out.active_device = template.active_device
         out._version = getattr(template, "_version", 0)
+        out._shape = getattr(pooled, "shape", getattr(data, "shape", getattr(template, "_shape", None)))
         out.data = pooled
         return out
 
@@ -92,6 +95,7 @@ def _prepare_inplace_out(out, template, backend, requires_grad):
         out._backend = backend
         out.device = template.device
         out.active_device = template.active_device
+        out._shape = getattr(out.data, "shape", getattr(template, "_shape", None))
         out._bump_version()
         return out
 
@@ -271,7 +275,15 @@ def matmul(input, other, out=None):
                 backend = _backend(input, other)
 
         if out is None:
-                buffer = _maybe_allocate_buffer((input.data.shape[0], other.data.shape[1]), input._dtype, backend, input.device)
+                buffer = None
+                if getattr(input.data, "ndim", 0) == 2 and getattr(other.data, "ndim", 0) == 2:
+                        buffer = _maybe_allocate_buffer(
+                                (input.data.shape[0], other.data.shape[1]),
+                                input._dtype,
+                                backend,
+                                input.device,
+                        )
+
                 if buffer is not None:
                         result_data = backend.matmul(input.data, other.data, out=buffer)
                 else:

@@ -50,7 +50,10 @@ class Tensor:
         "_version",
         "_post_backward_hooks",
         "_grad_lock",
+        "_freed",
+        "_shape",
         "__weakref__",
+        "__dict__",
     )
 
     def __init__(
@@ -65,6 +68,8 @@ class Tensor:
         self._grad_fn = None
         self._version = 0
         self._grad_lock = threading.Lock()
+        self._freed = False
+        self._shape = None
 
         self._dtype = dtype or DEFAULT_DTYPE
         backend, device_index, device_string = self._resolve_backend(device)
@@ -73,7 +78,8 @@ class Tensor:
         self.active_device = device_string
 
         converted = backend.convert(data, self._dtype, device=device_index)
-        buffer = _request_buffer(converted.shape, self._dtype, backend, device_index)
+        self._shape = getattr(converted, "shape", getattr(data, "shape", None))
+        buffer = _request_buffer(self._shape, self._dtype, backend, device_index)
         if buffer is not None:
             backend.copyto(buffer, converted)
             converted = buffer
@@ -327,7 +333,7 @@ class Tensor:
 
     @property
     def shape(self):
-        return self.data.shape
+        return getattr(self.data, "shape", getattr(self, "_shape", None))
 
     @property
     def ndim(self) -> int:
@@ -434,6 +440,7 @@ class Tensor:
         detached.device = self.device
         detached.active_device = self.active_device
         detached.data = self.data
+        detached._shape = getattr(self, "_shape", getattr(self.data, "shape", None))
         return detached
 
     def clone(self) -> "Tensor":
@@ -447,18 +454,37 @@ class Tensor:
         cloned.active_device = self.active_device
         cloned._version = getattr(self, "_version", 0)
 
-        buffer = _request_buffer(self.data.shape, self._dtype, self._backend, self.device)
+        data_shape = getattr(self.data, "shape", getattr(self, "_shape", None))
+        cloned._shape = data_shape
+
+        buffer = _request_buffer(data_shape, self._dtype, self._backend, self.device)
         if buffer is not None:
             self._backend.copyto(buffer, self.data)
             cloned.data = buffer
         else:
-            cloned.data = self._backend.copy(self.data)
+            try:
+                cloned.data = self._backend.copy(self.data)
+            except Exception:
+                pointer_clone = _clone_pointer_like(
+                    self.data, data_shape, self._dtype, self._backend, self.device
+                )
+                if pointer_clone is not None:
+                    cloned.data = pointer_clone
+                else:
+                    # Fall back to a dtype/device-aware convert path for raw pointers
+                    # (e.g., CuPy MemoryPointer) that lack array semantics.
+                    cloned.data = self._backend.convert(self.data, self._dtype, device=self.device)
         return cloned
 
     # ------------------------------------------------------------------
     # Memory helpers
     # ------------------------------------------------------------------
-    def free(self) -> None:
+    def free(self, *, collect: bool = False) -> None:
+        if getattr(self, "_freed", False):
+            return
+
+        self._freed = True
+
         if getattr(self, "data", None) is not None:
             buffer_returner = globals().get("_return_buffer")
             try:
@@ -472,11 +498,12 @@ class Tensor:
             self._grad = None
         if self._grad_fn is not None:
             self._grad_fn = None
-        gc.collect()
+        if collect:
+            gc.collect()
 
     def __del__(self):
         try:
-            self.free()
+            self.free(collect=False)
         except Exception:
             # Avoid exceptions during interpreter shutdown
             pass
@@ -564,7 +591,9 @@ class Tensor:
         new_tensor.active_device = self.active_device
         new_tensor._version = getattr(self, "_version", 0)
 
-        buffer = _request_buffer(getattr(data, "shape", None), new_tensor._dtype, new_tensor._backend, new_tensor.device)
+        new_tensor._shape = getattr(data, "shape", getattr(self, "_shape", None))
+
+        buffer = _request_buffer(new_tensor._shape, new_tensor._dtype, new_tensor._backend, new_tensor.device)
         if buffer is not None:
             new_tensor._backend.copyto(buffer, data)
             data = buffer
@@ -633,6 +662,8 @@ def _parse_device_index(device: str) -> Optional[int]:
 def _request_buffer(shape, dtype, backend, device):
     if shape is None or backend is None:
         return None
+    if getattr(backend, "BACKEND_NAME", None) == "cpu":
+        return None
     try:
         return get_buffer_pool().get_buffer(shape, dtype, backend, device)
     except Exception:
@@ -649,6 +680,46 @@ def _return_buffer(buffer, dtype, backend, device):
         get_buffer_pool().return_buffer(buffer, shape, dtype, backend, device)
     except Exception:
         return
+
+
+def _resolve_backend_dtype(dtype, backend):
+    if hasattr(dtype, "precision") or hasattr(dtype, "precission"):
+        key = getattr(dtype, "precision", getattr(dtype, "precission", None))
+    else:
+        key = dtype
+
+    mapping = getattr(backend, "precision_map", None)
+    if mapping and key in mapping:
+        return mapping[key]
+    return key
+
+
+def _clone_pointer_like(data, shape, dtype, backend, device):
+    if shape is None:
+        return None
+
+    if getattr(backend, "BACKEND_NAME", None) != "cuda":
+        return None
+
+    try:
+        import cupy as cp
+    except Exception:
+        return None
+
+    if not isinstance(data, cp.cuda.memory.MemoryPointer):
+        return None
+
+    resolved_dtype = _resolve_backend_dtype(dtype, backend)
+
+    try:
+        view = cp.ndarray(shape, dtype=resolved_dtype, memptr=data)
+        return backend.copy(view)
+    except Exception:
+        try:
+            view = cp.ndarray(shape, dtype=resolved_dtype, memptr=data)
+            return backend.convert(view, dtype, device=device)
+        except Exception:
+            return None
 
 
 from .cpu import backend as cpu_backend

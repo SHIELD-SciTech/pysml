@@ -2,40 +2,40 @@ from .module import Module
 
 
 class Dropout(Module):
-    
+
     def __init__(self, p=0.5, inplace=False):
         super().__init__()
         if p < 0 or p > 1:
             raise ValueError(f"Dropout probability must be in [0, 1], got {p}")
         self.p = p
         self.inplace = inplace
-    
-        def forward(self, x):
-                # Only apply dropout during training
-                if not self.training or self.p == 0:
-                        return x
 
-                from .. import engine
-                backend = x._backend
+    def forward(self, x):
+        # Only apply dropout during training
+        if not self.training or self.p == 0:
+            return x
 
-                rand = backend.rand(x.shape, device=x.device)
-                mask = backend.greater(rand, self.p)
-                mask = backend.astype(mask, x.data.dtype)
-                mask = backend.divide(mask, 1.0 - self.p)
+        from .. import engine
+        backend = x._backend
 
-                from .. import Tensor
+        rand = backend.rand(x.shape, device=x.device)
+        mask = backend.greater(rand, self.p)
+        mask = backend.astype(mask, x.data.dtype)
+        mask = backend.divide(mask, 1.0 - self.p)
 
-                mask_tensor = Tensor.__new__(Tensor)
-                mask_tensor._backend = backend
-                mask_tensor._dtype = x._dtype
-                mask_tensor.device = x.device
-                mask_tensor.active_device = x.active_device
-                mask_tensor.data = mask
-                mask_tensor._requires_grad = False
-                mask_tensor._grad = None
+        from .. import Tensor
 
-                return engine.multiply(x, mask_tensor)
-    
+        mask_tensor = Tensor.__new__(Tensor)
+        mask_tensor._backend = backend
+        mask_tensor._dtype = x._dtype
+        mask_tensor.device = x.device
+        mask_tensor.active_device = x.active_device
+        mask_tensor.data = mask
+        mask_tensor._requires_grad = False
+        mask_tensor._grad = None
+
+        return engine.multiply(x, mask_tensor)
+
     def extra_repr(self):
         return f"p={self.p}" + (", inplace=True" if self.inplace else "")
 

@@ -76,5 +76,5 @@ __all__ = [
         'xpu', 'cuda', 'cpu', 'ddp'
 ]
 
-__version__ = '0.5.3'
+__version__ = '1.0.0'
 __all__.append('__version__')

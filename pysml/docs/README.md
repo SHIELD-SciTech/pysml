@@ -7,6 +7,7 @@ This directory is your onboarding ramp into PySML. Each guide mixes narrative co
 | Document | Purpose | Example tie-ins |
 | --- | --- | --- |
 | [Public API Reference](public_api.md) | Enumerates the stable user-facing surface with references, usage snippets, and PyTorch/TensorFlow equivalents. | Transformer, RWKV, and diffusion demos all highlight these APIs in their docstrings.【F:pysml/docs/public_api.md†L1-L154】 |
+| [Example Gallery](examples.md) | Lists runnable demos for CPU/CUDA/XPU, including super-resolution, diffusion, RWKV, and Transformer pipelines. | Start here when you need a working template for a specific workload or backend.【F:pysml/docs/examples.md†L1-L30】 |
 | [Private & Experimental API Guide](private_api.md) | Explains the internals (autograd, dispatcher, memory pool) needed when extending PySML itself. | Useful when modifying operators used by the example suite or building custom backends.【F:pysml/docs/private_api.md†L1-L147】 |
 | [Autograd Internals](autograd.md) | Describes how computation graphs are recorded and executed, with guidance for adding new ops and verifying reductions. | Mirrors the steps taken in `pysml/examples/transformer.py` when composing differentiable modules and in the reduction sanity-check demo.【F:pysml/docs/autograd.md†L1-L40】【F:pysml/examples/autograd_reduction.py†L1-L46】 |
 | [Backend Abstraction](backends.md) | Lists CPU/CUDA/XPU adapter capabilities and troubleshooting tips. | Use alongside `ExampleConfig` to select the right device before launching demos.【F:pysml/docs/backends.md†L1-L40】 |
