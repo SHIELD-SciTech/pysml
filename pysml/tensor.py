@@ -50,6 +50,7 @@ class Tensor:
         "_version",
         "_post_backward_hooks",
         "_grad_lock",
+        "_freed",
         "__weakref__",
     )
 
@@ -65,6 +66,7 @@ class Tensor:
         self._grad_fn = None
         self._version = 0
         self._grad_lock = threading.Lock()
+        self._freed = False
 
         self._dtype = dtype or DEFAULT_DTYPE
         backend, device_index, device_string = self._resolve_backend(device)
@@ -447,18 +449,29 @@ class Tensor:
         cloned.active_device = self.active_device
         cloned._version = getattr(self, "_version", 0)
 
-        buffer = _request_buffer(self.data.shape, self._dtype, self._backend, self.device)
+        data_shape = getattr(self.data, "shape", None)
+        buffer = _request_buffer(data_shape, self._dtype, self._backend, self.device)
         if buffer is not None:
             self._backend.copyto(buffer, self.data)
             cloned.data = buffer
         else:
-            cloned.data = self._backend.copy(self.data)
+            try:
+                cloned.data = self._backend.copy(self.data)
+            except Exception:
+                # Fall back to a dtype/device-aware convert path for raw pointers
+                # (e.g., CuPy MemoryPointer) that lack array semantics.
+                cloned.data = self._backend.convert(self.data, self._dtype, device=self.device)
         return cloned
 
     # ------------------------------------------------------------------
     # Memory helpers
     # ------------------------------------------------------------------
-    def free(self) -> None:
+    def free(self, *, collect: bool = False) -> None:
+        if getattr(self, "_freed", False):
+            return
+
+        self._freed = True
+
         if getattr(self, "data", None) is not None:
             buffer_returner = globals().get("_return_buffer")
             try:
@@ -472,11 +485,12 @@ class Tensor:
             self._grad = None
         if self._grad_fn is not None:
             self._grad_fn = None
-        gc.collect()
+        if collect:
+            gc.collect()
 
     def __del__(self):
         try:
-            self.free()
+            self.free(collect=False)
         except Exception:
             # Avoid exceptions during interpreter shutdown
             pass
@@ -632,6 +646,8 @@ def _parse_device_index(device: str) -> Optional[int]:
 
 def _request_buffer(shape, dtype, backend, device):
     if shape is None or backend is None:
+        return None
+    if getattr(backend, "BACKEND_NAME", None) == "cpu":
         return None
     try:
         return get_buffer_pool().get_buffer(shape, dtype, backend, device)
