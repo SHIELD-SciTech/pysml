@@ -84,10 +84,33 @@ def _reduce_grad_to_shape(grad_data, target_shape, backend):
         return grad_data
 
 
+def _reduction_output_shape(input_shape, axis, keepdims):
+        """Compute the output shape of a reduction given ``axis`` and ``keepdims``."""
+
+        if axis is None:
+                return tuple(1 for _ in input_shape) if keepdims else tuple()
+
+        if not isinstance(axis, (tuple, list)):
+                axis = (axis,)
+
+        normalized_axes = []
+        for ax in axis:
+                normalized_axes.append(ax if ax >= 0 else ax + len(input_shape))
+
+        if keepdims:
+                return tuple(1 if i in normalized_axes else dim for i, dim in enumerate(input_shape))
+
+        return tuple(dim for i, dim in enumerate(input_shape) if i not in normalized_axes)
+
+
 def _expand_grad_for_reduction(grad_output, input_shape, axis, keepdims, backend):
         """Broadcast ``grad_output`` to ``input_shape`` following sum/mean semantics."""
 
         grad_data = grad_output.data if hasattr(grad_output, 'data') else grad_output
+
+        # Reduce upstream gradients that may have been broadcast beyond the reduction output shape.
+        output_shape = _reduction_output_shape(input_shape, axis, keepdims)
+        grad_data = _reduce_grad_to_shape(grad_data, output_shape, backend)
 
         if axis is None:
                 return backend.broadcast_to(grad_data, input_shape)
