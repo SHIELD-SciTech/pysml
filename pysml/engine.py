@@ -13,8 +13,8 @@ backward_log, backward_tanh, backward_sum, backward_mean, backward_transpose,
         backward_permute, backward_unsqueeze,
         backward_abs, backward_sign, backward_clip, backward_where,
         backward_maximum, backward_minimum,
-        backward_max_reduce, backward_min_reduce,
-        backward_split,
+    backward_max_reduce, backward_min_reduce,
+    backward_split, backward_getitem,
 )
 import builtins
 import gc
@@ -39,6 +39,14 @@ def _backend(*tensors):
                         if backend_index == 2:
                                 break
         return backend
+
+
+def _normalize_index(index):
+        if isinstance(index, Tensor):
+                return index.data
+        if isinstance(index, (list, tuple)):
+                return tuple(_normalize_index(i) for i in index)
+        return index
 
 
 ENSURE_BACKEND = False
@@ -1675,8 +1683,32 @@ def gather(input, dim, index):
         out.device = input.device
         out.active_device = input.active_device
         out.data = result_data
-        
+
         # Note: gather backward requires scatter, simplified
+        return out
+
+
+def getitem(input, index):
+        backend = input._backend
+        normalized_index = _normalize_index(index)
+        result_data = input.data[normalized_index]
+
+        out = Tensor.__new__(Tensor)
+        out._requires_grad = input._requires_grad
+        out._grad = None
+        out._dtype = input._dtype
+        out._backend = backend
+        out.device = input.device
+        out.active_device = input.active_device
+        out.data = result_data
+
+        if is_grad_enabled() and input._requires_grad:
+                out._grad_fn = Function(
+                        backward_getitem,
+                        [input],
+                        metadata={"index_spec": normalized_index},
+                )
+
         return out
 
 

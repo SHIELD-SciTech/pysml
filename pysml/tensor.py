@@ -204,7 +204,7 @@ class Tensor:
 
         with self._grad_lock:
             if self._grad is None:
-                self._grad = gradient
+                self._grad = gradient.clone()
             else:
                 backend = self._backend
                 grad_buffer = getattr(self._grad, "data", self._grad)
@@ -245,7 +245,7 @@ class Tensor:
 
                 with input_tensor._grad_lock:
                     if input_tensor._grad is None:
-                        input_tensor._grad = grad_value
+                        input_tensor._grad = grad_value.clone()
                     else:
                         backend = input_tensor._backend
                         grad_buffer = getattr(input_tensor._grad, "data", input_tensor._grad)
@@ -460,8 +460,10 @@ class Tensor:
     # ------------------------------------------------------------------
     def free(self) -> None:
         if getattr(self, "data", None) is not None:
+            buffer_returner = globals().get("_return_buffer")
             try:
-                _return_buffer(self.data, self._dtype, self._backend, self.device)
+                if buffer_returner is not None and self._backend is not None:
+                    buffer_returner(self.data, self._dtype, self._backend, self.device)
             finally:
                 del self.data
                 self.data = None
@@ -492,6 +494,20 @@ class Tensor:
         )
 
     __str__ = __repr__
+
+    def __getitem__(self, index):
+        return engine.getitem(self, index)
+
+    def __setitem__(self, index, value):
+        normalized_index = engine._normalize_index(index)
+        payload = value.data if isinstance(value, Tensor) else value
+        try:
+            payload = self._backend.convert(payload, self._dtype, device=self.device)
+        except Exception:
+            pass
+
+        self.data[normalized_index] = payload
+        self._version += 1
 
     # ------------------------------------------------------------------
     # Arithmetic operator overloads
