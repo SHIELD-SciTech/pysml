@@ -29,6 +29,7 @@ class Communicator:
     name: str = "global"
     mailboxes: Dict[str, List[MailboxEntry]] = field(default_factory=dict)
     _reductions: Dict[str, List[Tensor]] = field(default_factory=dict)
+    _gathers: Dict[str, List[MailboxEntry]] = field(default_factory=dict)
     _active_device: Optional[str] = None
 
     def __post_init__(self) -> None:
@@ -92,26 +93,43 @@ class Communicator:
     # ------------------------------------------------------------------
     def all_reduce(self, tensor: Tensor, *, op: str = "sum", tag: Optional[str] = None) -> Tensor:
         bucket_id = tag or "default"
+        caller_device = _normalize_device(self._active_device or tensor.active_device)
         payload = _move_tensor(tensor, "cpu")
         bucket = self._reductions.setdefault(bucket_id, [])
-        bucket.append(payload.clone())
+        bucket.append(payload)
         if len(bucket) < self.world_size:
-            return payload
+            return _move_tensor(tensor, caller_device)
         reduced = _reduce_tensors(bucket, op)
         self._reductions.pop(bucket_id, None)
-        return reduced
+        return _move_tensor(reduced, caller_device)
 
     def broadcast(self, tensor: Tensor, *, src: Optional[str] = None) -> List[Tensor]:
         source = _normalize_device(src or self.devices[0])
         payload = _move_tensor(tensor, source)
         return [_move_tensor(payload, device) for device in self.devices]
 
-    def gather(self, tensor: Tensor, *, dst: Optional[str] = None) -> List[Tensor]:
+    def gather(self, tensor: Tensor, *, dst: Optional[str] = None, tag: Optional[str] = None) -> List[Tensor]:
         target = _normalize_device(dst or self.devices[0])
+        bucket_id = f"{target}:{tag or 'default'}"
         payload = _move_tensor(tensor, target)
-        bucket = self.mailboxes.setdefault(target, [])
+        bucket = self._gathers.setdefault(bucket_id, [])
         bucket.append(MailboxEntry(_normalize_device(self._active_device or target), payload))
-        return [entry.payload for entry in bucket]
+        if len(bucket) < self.world_size:
+            raise RuntimeError(
+                "gather requires one tensor from each device; "
+                f"received {len(bucket)} of {self.world_size}"
+            )
+        ordered = []
+        for device in self.devices:
+            for idx, entry in enumerate(bucket):
+                if entry.src == device:
+                    ordered.append(entry.payload)
+                    bucket.pop(idx)
+                    break
+            else:
+                raise RuntimeError(f"Missing tensor from device {device!r} for gather")
+        self._gathers.pop(bucket_id, None)
+        return ordered
 
 
 _GLOBAL_COMMUNICATOR: Optional[Communicator] = None
@@ -170,9 +188,10 @@ def gather(
     tensor: Tensor,
     *,
     dst: Optional[str] = None,
+    tag: Optional[str] = None,
     communicator: Optional[Communicator] = None,
 ) -> List[Tensor]:
-    return (communicator or default_communicator()).gather(tensor, dst=dst)
+    return (communicator or default_communicator()).gather(tensor, dst=dst, tag=tag)
 
 
 # ----------------------------------------------------------------------
@@ -195,7 +214,7 @@ def _normalize_device(device: str) -> str:
 
 def _move_tensor(tensor: Tensor, device: str) -> Tensor:
     replica = tensor.clone()
-    replica.to(device, copy=True)
+    replica.to(device)
     return replica
 
 
