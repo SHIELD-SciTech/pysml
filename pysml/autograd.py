@@ -1239,14 +1239,17 @@ def backward_split(grad_output, input_ref, **metadata):
 
 	input_tensor = input_ref() if input_ref else None
 
-	if input_tensor and input_tensor._requires_grad:
-		backend = input_tensor._backend
-		axis = metadata.get('axis', 0)
-		sizes = metadata.get('sizes', [])
-		index = metadata.get('index', 0)
-		shared_state = metadata.get('shared_state', {})
+        if input_tensor and input_tensor._requires_grad:
+                backend = input_tensor._backend
+                axis = metadata.get('axis', 0)
+                sizes = metadata.get('sizes', [])
+                index = metadata.get('index', 0)
+                shared_state = metadata.get('shared_state', {})
 
                 grad_data = shared_state.get('buffer')
+                if grad_data is None:
+                        grad_data = backend.zeros_like(input_tensor.data)
+                        shared_state['buffer'] = grad_data
 
                 if isinstance(grad_output, (list, tuple)):
                         for idx, g in enumerate(grad_output):
@@ -1270,24 +1273,27 @@ def backward_split(grad_output, input_ref, **metadata):
                         slices[axis] = slice(start, end)
                         grad_data[tuple(slices)] = grad_output.data
 
-		shared_state['completed'] = shared_state.get('completed', 0) + 1
+                shared_state['completed'] = shared_state.get('completed', 0) + 1
 
-		grad_tensor = None
-		num_chunks = shared_state.get('num_chunks', 1)
-		if shared_state.get('completed', 0) >= num_chunks:
-			if shared_state.get('buffer') is None:
-				return [None]
-			grad_tensor = type(input_tensor).__new__(type(input_tensor))
-			grad_tensor._backend = backend
-			grad_tensor._dtype = input_tensor._dtype
-			grad_tensor.device = input_tensor.device
-			grad_tensor.active_device = input_tensor.active_device
-			grad_tensor.data = grad_data
-			grad_tensor._requires_grad = False
-			grad_tensor._grad = None
-			grad_tensor._grad_fn = None
+                grad_tensor = None
+                if shared_state.get('completed', 0) >= shared_state.get('num_chunks', 1):
+                        grad_tensor = type(input_tensor).__new__(type(input_tensor))
+                        grad_tensor._backend = backend
+                        grad_tensor._dtype = input_tensor._dtype
+                        grad_tensor.device = input_tensor.device
+                        grad_tensor.active_device = input_tensor.active_device
+                        grad_tensor.data = grad_data
+                        grad_tensor._requires_grad = False
+                        grad_tensor._grad = None
+                        grad_tensor._grad_fn = None
 
-			shared_state['buffer'] = None
+                        shared_state['buffer'] = None
+
+                grads.append((input_tensor, grad_tensor))
+        else:
+                grads.append(None)
+
+        return grads
 
 		grads.append((input_tensor, grad_tensor))
 	else:
