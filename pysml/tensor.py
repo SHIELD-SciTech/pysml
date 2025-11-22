@@ -52,6 +52,7 @@ class Tensor:
         "_grad_lock",
         "_freed",
         "__weakref__",
+        "__dict__",
     )
 
     def __init__(
