@@ -1230,70 +1230,71 @@ def backward_concatenate(grad_output, *input_refs, **metadata):
 
 
 def backward_split(grad_output, input_ref, **metadata):
-	"""
-	Backward for split/chunk
+        """
+        Backward for split/chunk
 
-	Concatenate gradients from all output chunks
-	"""
-	grads = []
+        Concatenate gradients from all output chunks
+        """
+        grads = []
 
-	input_tensor = input_ref() if input_ref else None
+        input_tensor = input_ref() if input_ref else None
 
-	if input_tensor and input_tensor._requires_grad:
-		backend = input_tensor._backend
-		axis = metadata.get('axis', 0)
-		sizes = metadata.get('sizes', [])
-		index = metadata.get('index', 0)
-		shared_state = metadata.get('shared_state', {})
+        if input_tensor and input_tensor._requires_grad:
+                backend = input_tensor._backend
+                axis = metadata.get('axis', 0)
+                sizes = metadata.get('sizes', [])
+                index = metadata.get('index', 0)
+                shared_state = metadata.get('shared_state', {})
 
-		grad_data = shared_state.get('buffer')
+                grad_data = shared_state.get('buffer')
+                if grad_data is None:
+                        grad_data = backend.zeros_like(input_tensor.data)
+                        shared_state['buffer'] = grad_data
 
-		if isinstance(grad_output, (list, tuple)):
-			for idx, g in enumerate(grad_output):
-				if g is None:
-					continue
-				if grad_data is None:
-					grad_data = backend.zeros_like(input_tensor.data)
-					shared_state['buffer'] = grad_data
-				start = builtins.sum(sizes[:idx]) if sizes else 0
-				end = start + (sizes[idx] if sizes else g.data.shape[axis])
-				slices = [slice(None)] * grad_data.ndim
-				slices[axis] = slice(start, end)
-				grad_data[tuple(slices)] = g.data
-		elif grad_output is not None:
-			if grad_data is None:
-				grad_data = backend.zeros_like(input_tensor.data)
-				shared_state['buffer'] = grad_data
-			start = builtins.sum(sizes[:index]) if sizes else 0
-			end = start + (sizes[index] if sizes else grad_output.data.shape[axis])
-			slices = [slice(None)] * grad_data.ndim
-			slices[axis] = slice(start, end)
-			grad_data[tuple(slices)] = grad_output.data
+                if isinstance(grad_output, (list, tuple)):
+                        for idx, g in enumerate(grad_output):
+                                if g is None:
+                                        continue
+                                if grad_data is None:
+                                        grad_data = backend.zeros_like(input_tensor.data)
+                                        shared_state['buffer'] = grad_data
+                                start = builtins.sum(sizes[:idx]) if sizes else 0
+                                end = start + (sizes[idx] if sizes else g.data.shape[axis])
+                                slices = [slice(None)] * grad_data.ndim
+                                slices[axis] = slice(start, end)
+                                grad_data[tuple(slices)] = g.data
+                elif grad_output is not None:
+                        if grad_data is None:
+                                grad_data = backend.zeros_like(input_tensor.data)
+                                shared_state['buffer'] = grad_data
+                        start = builtins.sum(sizes[:index]) if sizes else 0
+                        end = start + (sizes[index] if sizes else grad_output.data.shape[axis])
+                        slices = [slice(None)] * grad_data.ndim
+                        slices[axis] = slice(start, end)
+                        grad_data[tuple(slices)] = grad_output.data
 
-		shared_state['completed'] = shared_state.get('completed', 0) + 1
+                shared_state['completed'] = shared_state.get('completed', 0) + 1
 
-		grad_tensor = None
-		num_chunks = shared_state.get('num_chunks', 1)
-		if shared_state.get('completed', 0) >= num_chunks:
-			if shared_state.get('buffer') is None:
-				return [None]
-			grad_tensor = type(input_tensor).__new__(type(input_tensor))
-			grad_tensor._backend = backend
-			grad_tensor._dtype = input_tensor._dtype
-			grad_tensor.device = input_tensor.device
-			grad_tensor.active_device = input_tensor.active_device
-			grad_tensor.data = grad_data
-			grad_tensor._requires_grad = False
-			grad_tensor._grad = None
-			grad_tensor._grad_fn = None
+                grad_tensor = None
+                if shared_state.get('completed', 0) >= shared_state.get('num_chunks', 1):
+                        grad_tensor = type(input_tensor).__new__(type(input_tensor))
+                        grad_tensor._backend = backend
+                        grad_tensor._dtype = input_tensor._dtype
+                        grad_tensor.device = input_tensor.device
+                        grad_tensor.active_device = input_tensor.active_device
+                        grad_tensor.data = grad_data
+                        grad_tensor._requires_grad = False
+                        grad_tensor._grad = None
+                        grad_tensor._grad_fn = None
 
-			shared_state['buffer'] = None
+                        shared_state['buffer'] = None
 
-		grads.append((input_tensor, grad_tensor))
-	else:
-		grads.append(None)
+                grads.append((input_tensor, grad_tensor))
+        else:
+                grads.append(None)
 
-	return grads
+        return grads
+
 
 def backward_max_reduce(grad_output, input_ref, **metadata):
         """
