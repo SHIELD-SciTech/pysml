@@ -633,6 +633,8 @@ def _parse_device_index(device: str) -> Optional[int]:
 def _request_buffer(shape, dtype, backend, device):
     if shape is None or backend is None:
         return None
+    if getattr(backend, "BACKEND_NAME", None) == "cpu":
+        return None
     try:
         return get_buffer_pool().get_buffer(shape, dtype, backend, device)
     except Exception:
