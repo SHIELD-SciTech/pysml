@@ -75,7 +75,8 @@ class Tensor:
         self.active_device = device_string
 
         converted = backend.convert(data, self._dtype, device=device_index)
-        buffer = _request_buffer(converted.shape, self._dtype, backend, device_index)
+        self._shape = getattr(converted, "shape", getattr(data, "shape", None))
+        buffer = _request_buffer(self._shape, self._dtype, backend, device_index)
         if buffer is not None:
             backend.copyto(buffer, converted)
             converted = buffer
@@ -329,7 +330,7 @@ class Tensor:
 
     @property
     def shape(self):
-        return self.data.shape
+        return getattr(self.data, "shape", getattr(self, "_shape", None))
 
     @property
     def ndim(self) -> int:
@@ -578,7 +579,9 @@ class Tensor:
         new_tensor.active_device = self.active_device
         new_tensor._version = getattr(self, "_version", 0)
 
-        buffer = _request_buffer(getattr(data, "shape", None), new_tensor._dtype, new_tensor._backend, new_tensor.device)
+        new_tensor._shape = getattr(data, "shape", getattr(self, "_shape", None))
+
+        buffer = _request_buffer(new_tensor._shape, new_tensor._dtype, new_tensor._backend, new_tensor.device)
         if buffer is not None:
             new_tensor._backend.copyto(buffer, data)
             data = buffer
@@ -665,6 +668,46 @@ def _return_buffer(buffer, dtype, backend, device):
         get_buffer_pool().return_buffer(buffer, shape, dtype, backend, device)
     except Exception:
         return
+
+
+def _resolve_backend_dtype(dtype, backend):
+    if hasattr(dtype, "precision") or hasattr(dtype, "precission"):
+        key = getattr(dtype, "precision", getattr(dtype, "precission", None))
+    else:
+        key = dtype
+
+    mapping = getattr(backend, "precision_map", None)
+    if mapping and key in mapping:
+        return mapping[key]
+    return key
+
+
+def _clone_pointer_like(data, shape, dtype, backend, device):
+    if shape is None:
+        return None
+
+    if getattr(backend, "BACKEND_NAME", None) != "cuda":
+        return None
+
+    try:
+        import cupy as cp
+    except Exception:
+        return None
+
+    if not isinstance(data, cp.cuda.memory.MemoryPointer):
+        return None
+
+    resolved_dtype = _resolve_backend_dtype(dtype, backend)
+
+    try:
+        view = cp.ndarray(shape, dtype=resolved_dtype, memptr=data)
+        return backend.copy(view)
+    except Exception:
+        try:
+            view = cp.ndarray(shape, dtype=resolved_dtype, memptr=data)
+            return backend.convert(view, dtype, device=device)
+        except Exception:
+            return None
 
 
 from .cpu import backend as cpu_backend
