@@ -1230,14 +1230,14 @@ def backward_concatenate(grad_output, *input_refs, **metadata):
 
 
 def backward_split(grad_output, input_ref, **metadata):
-        """
-        Backward for split/chunk
+	"""
+	Backward for split/chunk
 
-        Concatenate gradients from all output chunks
-        """
-        grads = []
+	Concatenate gradients from all output chunks
+	"""
+	grads = []
 
-        input_tensor = input_ref() if input_ref else None
+	input_tensor = input_ref() if input_ref else None
 
         if input_tensor and input_tensor._requires_grad:
                 backend = input_tensor._backend
@@ -1295,6 +1295,11 @@ def backward_split(grad_output, input_ref, **metadata):
 
         return grads
 
+		grads.append((input_tensor, grad_tensor))
+	else:
+		grads.append(None)
+
+	return grads
 
 def backward_max_reduce(grad_output, input_ref, **metadata):
         """
