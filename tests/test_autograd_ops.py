@@ -39,6 +39,34 @@ def test_mean_backward_scales_by_element_count():
     assert np.allclose(tensor.grad.data, expected)
 
 
+def test_mean_backward_with_axis_and_no_keepdims_broadcasts_upstream():
+    values = np.array([[1.0, 3.0, 5.0], [2.0, 4.0, 6.0]], dtype=np.float32)
+    tensor = Tensor(values, requires_grad=True)
+
+    reduced = pysml.mean(tensor, axis=1, keepdims=False)
+    upstream = np.array([2.0, 4.0], dtype=np.float32)
+    reduced.backward(Tensor(upstream))
+
+    assert tensor.grad is not None
+    expected = np.array([
+        [2.0 / 3.0, 2.0 / 3.0, 2.0 / 3.0],
+        [4.0 / 3.0, 4.0 / 3.0, 4.0 / 3.0],
+    ], dtype=np.float32)
+    assert np.allclose(tensor.grad.data, expected)
+
+
+def test_mean_backward_reduces_broadcasted_upstream_gradient():
+    tensor = Tensor(np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32), requires_grad=True)
+
+    reduced = pysml.mean(tensor)
+    upstream = np.ones(256, dtype=np.float32)
+    reduced.backward(Tensor(upstream))
+
+    assert tensor.grad is not None
+    expected = np.full_like(tensor.data, upstream.sum() / tensor.data.size)
+    assert np.allclose(tensor.grad.data, expected)
+
+
 def test_broadcast_multiply_backward_reduces_expanded_axes():
     left = Tensor(np.ones((2, 3), dtype=np.float32), requires_grad=True)
     right = Tensor(np.array([[2.0, 3.0, 4.0]], dtype=np.float32), requires_grad=True)

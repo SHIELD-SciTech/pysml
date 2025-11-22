@@ -84,10 +84,33 @@ def _reduce_grad_to_shape(grad_data, target_shape, backend):
         return grad_data
 
 
+def _reduction_output_shape(input_shape, axis, keepdims):
+        """Compute the output shape of a reduction given ``axis`` and ``keepdims``."""
+
+        if axis is None:
+                return tuple(1 for _ in input_shape) if keepdims else tuple()
+
+        if not isinstance(axis, (tuple, list)):
+                axis = (axis,)
+
+        normalized_axes = []
+        for ax in axis:
+                normalized_axes.append(ax if ax >= 0 else ax + len(input_shape))
+
+        if keepdims:
+                return tuple(1 if i in normalized_axes else dim for i, dim in enumerate(input_shape))
+
+        return tuple(dim for i, dim in enumerate(input_shape) if i not in normalized_axes)
+
+
 def _expand_grad_for_reduction(grad_output, input_shape, axis, keepdims, backend):
         """Broadcast ``grad_output`` to ``input_shape`` following sum/mean semantics."""
 
         grad_data = grad_output.data if hasattr(grad_output, 'data') else grad_output
+
+        # Reduce upstream gradients that may have been broadcast beyond the reduction output shape.
+        output_shape = _reduction_output_shape(input_shape, axis, keepdims)
+        grad_data = _reduce_grad_to_shape(grad_data, output_shape, backend)
 
         if axis is None:
                 return backend.broadcast_to(grad_data, input_shape)
@@ -1679,49 +1702,38 @@ def backward_where(grad_output, condition_ref, input_ref, other_ref, **metadata)
 def backward_mean(grad_output, input_ref, **metadata):
         """
         Backward for mean: z = mean(x)
-        
+
         dL/dx = dL/dz * (1/N) * ones_like(x)
         """
         grads = []
-        
+
         input_tensor = input_ref() if input_ref else None
-        
+
         if input_tensor and input_tensor._requires_grad:
                 backend = grad_output._backend if hasattr(grad_output, '_backend') else input_tensor._backend
                 axis = metadata.get('axis', None)
                 keepdims = metadata.get('keepdims', False)
-                
-                grad = type(input_tensor).__new__(type(input_tensor))
-                grad._backend = backend
-                grad._dtype = input_tensor._dtype
-                grad.device = input_tensor.device
-                grad.active_device = input_tensor.active_device
-                
-                # Broadcast grad_output to input shape and divide by count
-                grad.data = backend.ones_like(input_tensor.data)
-                
-                # Calculate number of elements that were averaged
-                if axis is None:
-                        N = 1
-                        for dim in input_tensor.shape:
-                                N *= dim
-                elif isinstance(axis, int):
-                        N = input_tensor.shape[axis]
-                else:
-                        N = 1
-                        for ax in axis:
-                                N *= input_tensor.shape[ax]
-                
-                if hasattr(grad_output, 'data'):
-                        grad.data = backend.multiply(grad.data, grad_output.data)
-                else:
-                        grad.data = backend.multiply(grad.data, grad_output)
-                
-                grad.data = backend.divide(grad.data, N)
-                grad._requires_grad = False
-                grad._grad = None
-                grad._grad_fn = None
-                
+                n = metadata.get('n', None)
+
+                # Broadcast grad_output to match the unreduced input shape
+                grad_data = _expand_grad_for_reduction(grad_output, input_tensor.shape, axis, keepdims, backend)
+
+                # Divide by the number of elements that were averaged
+                if n is None:
+                        if axis is None:
+                                n = 1
+                                for dim in input_tensor.shape:
+                                        n *= dim
+                        else:
+                                axes = axis if isinstance(axis, (tuple, list)) else (axis,)
+                                n = 1
+                                for ax in axes:
+                                        n *= input_tensor.shape[ax if ax >= 0 else ax + len(input_tensor.shape)]
+
+                grad_data = backend.divide(grad_data, n)
+
+                grad = _wrap_grad_tensor(grad_data, input_tensor)
+
                 grads.append((input_tensor, grad))
         else:
                 grads.append(None)
