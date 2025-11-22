@@ -127,20 +127,20 @@ gradient = ng.gradient
 cross = ng.cross
 
 def xpu_trapz(y, x=None, dx=1.0):
-    y = list(y) if not isinstance(y, list) else y
-    n = len(y)
-    if n < 2:
+    y_array = ng.asarray(y)
+    if y_array.shape[0] < 2:
         raise ValueError("Need at least 2 points for integration")
+
     if x is None:
-        return dx * (sum(y) - (y[0] + y[-1]) / 2)
+        segment_widths = dx
     else:
-        x = list(x) if not isinstance(x, list) else x
-        if len(x) != n:
+        x_array = ng.asarray(x)
+        if x_array.shape[0] != y_array.shape[0]:
             raise ValueError("x and y must have same length")
-        integral = 0.0
-        for i in range(n - 1):
-            integral += (x[i + 1] - x[i]) * (y[i] + y[i + 1]) / 2
-        return integral
+        segment_widths = x_array[1:] - x_array[:-1]
+
+    mid_heights = (y_array[:-1] + y_array[1:]) / 2
+    return ng.sum(segment_widths * mid_heights)
 
 if AVAILABLE:
     trapz = xpu_trapz
