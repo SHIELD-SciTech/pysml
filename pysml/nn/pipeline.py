@@ -253,7 +253,10 @@ class PipelineModule(Module):
         return normalized
 
     def _communicate(
-        self, stage_idx: int, payload: tuple[tuple[Any, ...], dict[str, Any]]
+        self,
+        stage_idx: int,
+        payload: tuple[tuple[Any, ...], dict[str, Any]],
+        stage_messages: list[list[Any]],
     ) -> None:
         if stage_idx >= len(self._stages) - 1:
             return
@@ -267,7 +270,7 @@ class PipelineModule(Module):
         else:
             for tensor in tensors:
                 transmitted.append(dist_primitives.send(tensor, dst=0))
-        self._stage_messages[stage_idx] = transmitted
+        stage_messages[stage_idx] = transmitted
 
     def _collect_tensors(self, payload: tuple[tuple[Any, ...], dict[str, Any]]) -> list[Tensor]:
         tensors: list[Tensor] = []
