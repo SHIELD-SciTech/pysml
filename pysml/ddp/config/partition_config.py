@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence
 
+import numpy as np
+
 
 SUPPORTED_DEVICE_KINDS = ("cpu", "cuda", "xpu")
 
@@ -149,7 +151,13 @@ def detect_device_specs(devices: Optional[Sequence[str]]) -> List[DeviceSpec]:
         normalized = _normalize_device(device)
         # Rough heuristic: assume later devices have slightly less headroom.
         index = len(specs) + 1
-        specs.append(DeviceSpec(normalized, memory_gb=max(4.0, 16.0 - index), compute_tflops=10.0 - 0.5 * index))
+        specs.append(
+            DeviceSpec(
+                normalized,
+                memory_gb=max(4.0, 16.0 - index),
+                compute_tflops=max(0.5, 10.0 - 0.5 * index),
+            )
+        )
     return specs
 
 
@@ -158,14 +166,30 @@ def plan_partitions(num_layers: int, devices: Sequence[DeviceSpec]) -> List[int]
         raise ValueError("num_layers must be positive")
     weights = [max(device.memory_gb, 1.0) for device in devices]
     total = sum(weights)
+    quotas = [num_layers * (weight / total) for weight in weights]
     partitions: List[int] = []
-    allocated = 0
-    for idx, weight in enumerate(weights):
-        share = int(round(num_layers * (weight / total)))
-        partitions.append(max(1, share))
-        allocated += partitions[-1]
-    if allocated != num_layers:
-        partitions[-1] += num_layers - allocated
+    remainders: List[float] = []
+    for quota in quotas:
+        share = max(1, int(quota))
+        partitions.append(share)
+        remainders.append(quota - share)
+
+    allocated = sum(partitions)
+    if allocated < num_layers:
+        remaining = num_layers - allocated
+        for idx in np.argsort(remainders)[::-1].tolist():
+            if remaining == 0:
+                break
+            partitions[idx] += 1
+            remaining -= 1
+    elif allocated > num_layers:
+        overflow = allocated - num_layers
+        for idx in np.argsort(remainders).tolist():
+            if overflow == 0:
+                break
+            if partitions[idx] > 1:
+                partitions[idx] -= 1
+                overflow -= 1
     return partitions
 
 

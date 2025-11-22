@@ -48,6 +48,6 @@ class bf16:
 
         def __str__(self):
                 return f"<pysml.dtype.{self.precision}>"
-	
-	def __repr__(self):
-		return self.__str__()
+
+        def __repr__(self):
+                return self.__str__()

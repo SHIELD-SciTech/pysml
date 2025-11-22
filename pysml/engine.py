@@ -4,12 +4,12 @@ Function, is_grad_enabled,
 backward_add, backward_subtract, backward_multiply, backward_divide,
 backward_power, backward_matmul, backward_relu, backward_exp,
 backward_log, backward_tanh, backward_sum, backward_mean, backward_transpose,
-	backward_reshape, backward_sigmoid, backward_sqrt, backward_sin,
-	backward_cos,
-	# NEW IMPORTS BELOW
-	backward_softmax, backward_log_softmax, backward_gelu, backward_silu,
-	backward_layer_norm, backward_rms_norm, backward_batch_norm, backward_group_norm,
-	backward_dropout, backward_embedding,
+    backward_reshape, backward_sigmoid, backward_sqrt, backward_sin,
+    backward_cos,
+    # NEW IMPORTS BELOW
+    backward_softmax, backward_log_softmax, backward_gelu, backward_silu,
+    backward_layer_norm, backward_rms_norm, backward_batch_norm, backward_group_norm,
+    backward_dropout, backward_embedding,
         backward_permute, backward_unsqueeze,
         backward_abs, backward_sign, backward_clip, backward_where,
         backward_maximum, backward_minimum,
@@ -501,36 +501,36 @@ def sum_with_grad(input, axis=None, keepdims=False):
 
 
 def mean_with_grad(input, axis=None, keepdims=False):
-	backend = input._backend
-	result_data = backend.mean(input.data, axis=axis, keepdims=keepdims)
+    backend = input._backend
+    result_data = backend.mean(input.data, axis=axis, keepdims=keepdims)
 
-	# Wrap in Tensor
-	out = Tensor.__new__(Tensor)
-	out._requires_grad = input._requires_grad
-	out._grad = None
-	out._dtype = input._dtype
-	out._backend = backend
-	out.device = input.device
-	out.active_device = input.active_device
-	out.data = result_data
+    # Wrap in Tensor
+    out = Tensor.__new__(Tensor)
+    out._requires_grad = input._requires_grad
+    out._grad = None
+    out._dtype = input._dtype
+    out._backend = backend
+    out.device = input.device
+    out.active_device = input.active_device
+    out.data = result_data
 
-	# Build computational graph (mean = sum / n)
-	if is_grad_enabled() and out._requires_grad:
-		if axis is None:
-			n = input.data.size
-		else:
-			axes = axis if isinstance(axis, (tuple, list)) else (axis,)
-			n = 1
-			for ax in axes:
-				n *= input.data.shape[ax if ax >= 0 else ax + input.data.ndim]
+    # Build computational graph (mean = sum / n)
+    if is_grad_enabled() and out._requires_grad:
+        if axis is None:
+            n = input.data.size
+        else:
+            axes = axis if isinstance(axis, (tuple, list)) else (axis,)
+            n = 1
+            for ax in axes:
+                n *= input.data.shape[ax if ax >= 0 else ax + input.data.ndim]
 
-		out._grad_fn = Function(
-			backward_mean,
-			[input],
-			metadata={'axis': axis, 'keepdims': keepdims, 'n': n}
-		)
+        out._grad_fn = Function(
+            backward_mean,
+            [input],
+            metadata={'axis': axis, 'keepdims': keepdims, 'n': n}
+        )
 
-	return out
+    return out
 
 
 # ============================================================================
