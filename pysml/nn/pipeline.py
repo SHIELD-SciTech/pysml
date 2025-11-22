@@ -154,11 +154,17 @@ class PipelineModule(Module):
     def forward(self, *args: Any, **kwargs: Any) -> Any:
         stage_latencies: list[list[float]] = [[] for _ in self._stages]
         stage_memory: list[list[int]] = [[] for _ in self._stages]
+        stage_messages: list[list[Any]] = [[] for _ in self._stages]
+        self._stage_messages = stage_messages
         micro_batches = self._chunk_arguments(args, kwargs)
         if self.schedule == "gpipe":
-            outputs = self._run_gpipe(micro_batches, stage_latencies, stage_memory)
+            outputs = self._run_gpipe(
+                micro_batches, stage_latencies, stage_memory, stage_messages
+            )
         else:
-            outputs = self._run_1f1b(micro_batches, stage_latencies, stage_memory)
+            outputs = self._run_1f1b(
+                micro_batches, stage_latencies, stage_memory, stage_messages
+            )
         merged = self._merge_outputs(outputs)
         self._latest_metrics = utils.build_pipeline_metrics(
             schedule=self.schedule,
@@ -179,13 +185,14 @@ class PipelineModule(Module):
         micro_batches: list[tuple[tuple[Any, ...], dict[str, Any]]],
         stage_latencies: list[list[float]],
         stage_memory: list[list[int]],
+        stage_messages: list[list[Any]],
     ):
         outputs = []
         for args, kwargs in micro_batches:
             payload = (args, kwargs)
             for idx, stage in enumerate(self._stages):
                 payload = self._execute_stage(
-                    idx, stage, payload, stage_latencies, stage_memory
+                    idx, stage, payload, stage_latencies, stage_memory, stage_messages
                 )
             outputs.append(self._denormalize(payload))
         return outputs
@@ -195,6 +202,7 @@ class PipelineModule(Module):
         micro_batches: list[tuple[tuple[Any, ...], dict[str, Any]]],
         stage_latencies: list[list[float]],
         stage_memory: list[list[int]],
+        stage_messages: list[list[Any]],
     ):
         in_flight: list[Optional[tuple[tuple[Any, ...], dict[str, Any]]]] = [None] * (
             len(self._stages)
@@ -212,6 +220,7 @@ class PipelineModule(Module):
                     payload,
                     stage_latencies,
                     stage_memory,
+                    stage_messages,
                 )
                 if stage_idx == len(self._stages) - 1:
                     outputs.append(self._denormalize(payload))
@@ -237,6 +246,7 @@ class PipelineModule(Module):
         payload: tuple[tuple[Any, ...], dict[str, Any]],
         stage_latencies: list[list[float]],
         stage_memory: list[list[int]],
+        stage_messages: list[list[Any]],
     ) -> tuple[tuple[Any, ...], dict[str, Any]]:
         args, kwargs = payload
         moved_args = self._move_to_device(args, spec.device)
@@ -247,7 +257,7 @@ class PipelineModule(Module):
         normalized = self._normalize_output(output)
         stage_latencies[stage_idx].append(latency)
         stage_memory[stage_idx].append(self._estimate_bytes(normalized))
-        self._communicate(stage_idx, normalized)
+        self._communicate(stage_idx, normalized, stage_messages)
         if self.activation_checkpoint:
             normalized = self._checkpoint_payload(stage_idx, normalized, spec)
         return normalized
