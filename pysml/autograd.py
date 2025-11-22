@@ -1292,12 +1292,6 @@ def backward_split(grad_output, input_ref, **metadata):
 
         return grads
 
-		grads.append((input_tensor, grad_tensor))
-	else:
-		grads.append(None)
-
-	return grads
-
 def backward_max_reduce(grad_output, input_ref, **metadata):
         """
         Backward for max reduction
