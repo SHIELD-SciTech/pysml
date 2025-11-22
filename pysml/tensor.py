@@ -449,12 +449,18 @@ class Tensor:
         cloned.active_device = self.active_device
         cloned._version = getattr(self, "_version", 0)
 
-        buffer = _request_buffer(self.data.shape, self._dtype, self._backend, self.device)
+        data_shape = getattr(self.data, "shape", None)
+        buffer = _request_buffer(data_shape, self._dtype, self._backend, self.device)
         if buffer is not None:
             self._backend.copyto(buffer, self.data)
             cloned.data = buffer
         else:
-            cloned.data = self._backend.copy(self.data)
+            try:
+                cloned.data = self._backend.copy(self.data)
+            except Exception:
+                # Fall back to a dtype/device-aware convert path for raw pointers
+                # (e.g., CuPy MemoryPointer) that lack array semantics.
+                cloned.data = self._backend.convert(self.data, self._dtype, device=self.device)
         return cloned
 
     # ------------------------------------------------------------------
