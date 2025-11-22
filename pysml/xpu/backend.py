@@ -17,7 +17,7 @@ except ImportError:
 
 precision_map = {"fp32": "float32", "fp16": "float16", "bf16": "bfloat16"}
 precision = precision_map
-def convert(data, dtype, device=None, backend="level_zero"):
+def convert(data, dtype, device=None, backend="level_zero", shape=None):
         dtype_key = getattr(dtype, "precision", getattr(dtype, "precission", None))
         target_dtype = precision_map[dtype_key]
         if AVAILABLE and device is not None:

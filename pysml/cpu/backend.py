@@ -5,14 +5,17 @@ AVAILABLE = True
 precision_map = {"fp32": "float32", "fp16": "float16", "bf16": "float16"}
 precision = precision_map
 
-def convert(data, dtype, device=None):
-    # Convert from GPU backends to CPU
+def convert(data, dtype, device=None, shape=None):
+    """Convert from GPU/XPU arrays to CPU and enforce target precision."""
+
     if hasattr(data, 'get'):  # CuPy array
         data = data.get()
     elif hasattr(data, 'asnumpy'):  # dpnp array
         data = data.asnumpy()
-        dtype_key = getattr(dtype, "precision", getattr(dtype, "precission", None))
-        return np.array(data, dtype=precision_map[dtype_key])
+
+    dtype_key = getattr(dtype, "precision", getattr(dtype, "precission", None))
+    target_dtype = precision_map.get(dtype_key, dtype)
+    return np.asarray(data, dtype=target_dtype)
 
 add = np.add
 subtract = np.subtract
@@ -163,8 +166,18 @@ empty_like = np.empty_like
 full_like = np.full_like
 asarray = np.asarray
 copy = np.copy
+def _as_ndarray(buffer, *, dtype=None, shape=None):
+    if isinstance(buffer, memoryview):
+        if dtype is not None:
+            return np.asarray(buffer, dtype=dtype)
+        return np.asarray(buffer)
+    return buffer
+
+
 def copyto(dst, src):
-    np.copyto(dst, src)
+    dst_array = _as_ndarray(dst, dtype=getattr(src, "dtype", None), shape=getattr(src, "shape", None))
+    src_array = _as_ndarray(src, dtype=getattr(src, "dtype", None), shape=getattr(src, "shape", None))
+    np.copyto(dst_array, src_array)
 asnumpy = np.asarray
 
 float32 = np.float32
