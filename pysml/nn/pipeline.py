@@ -155,6 +155,7 @@ class PipelineModule(Module):
         stage_latencies: list[list[float]] = [[] for _ in self._stages]
         stage_memory: list[list[int]] = [[] for _ in self._stages]
         stage_messages: list[list[Any]] = [[] for _ in self._stages]
+        self._stage_messages = stage_messages
         micro_batches = self._chunk_arguments(args, kwargs)
         if self.schedule == "gpipe":
             outputs = self._run_gpipe(
