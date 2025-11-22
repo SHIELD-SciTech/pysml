@@ -1,6 +1,6 @@
 # PySML
 
-PySML (Python Strategic Hardware-Independent Learning) is a research-grade deep learning framework that mirrors the ergonomics of PyTorch while targeting CPU, NVIDIA CUDA, and Intel XPU from a single codebase. The library emphasizes explicit control over tensors, modules, and device placement so experimenters can prototype new architectures without juggling backend-specific forks.
+PySML (Python Strategic Hardware-Independent Learning) is a research-grade deep learning framework that mirrors the ergonomics of PyTorch while targeting CPU, NVIDIA CUDA, and Intel XPU from a single codebase. The library emphasizes explicit control over tensors, modules, and device placement so experimenters can prototype new architectures without juggling backend-specific forks. The v1.0 release locks in a stable API surface, refreshed documentation, and an expanded example gallery that covers text, audio, and vision workloads on every supported backend.
 
 ## Project Highlights
 - **Unified tensor core** – `pysml.tensor.Tensor` centralizes device-aware storage, gradient tracking, and dtype conversions while exposing familiar helpers such as `.to()`, `.cuda()`, and `.backward()`.
@@ -123,6 +123,15 @@ Wrap any sequential module with `PipelineParallel` and optionally nest it inside
 `ddp.DataParallel` for replica-style batching. See the dedicated DDP guide for
 training/inference loops plus RWKV and Transformer launch scripts.
 
+## Example Gallery (CPU, CUDA, and XPU)
+- **Transformers** – `pysml/examples/transformer_[cpu|cuda|xpu].py` cover encoder, decoder, and seq2seq classifiers with single-device and distributed rehearsal scripts.
+- **RWKV** – `pysml/examples/rwkv_[cpu|cuda|xpu].py` mirror the streaming-friendly recurrent pipeline and can be paired with the DDP rehearsal helpers.
+- **Diffusion (image + text)** – `pysml/examples/diffusion_[cpu|cuda|xpu].py` demonstrate both conditional text prompts and unconditional image denoising with configurable sampler steps.
+- **Upscaling / super-resolution** – `pysml/examples/upscaling.py` resizes and refines 32×32 RGB inputs with a shallow convolutional head; it automatically selects CUDA or XPU when available and falls back to CPU otherwise.
+- **Autograd reductions** – `pysml/examples/autograd_reduction.py` sanity-checks mean/sum behavior across axes and backpropagation.
+
+Each script accepts the same device strings (`"cpu"`, `"cuda"`, `"xpu"`) so you can validate behavior on your laptop CPU, NVIDIA GPU, or Intel XPU without editing model code.
+
 ## Learn More
 - Browse the new [`pysml/docs`](pysml/docs/README.md) directory for subsystem guides, API references, and integration tips.
 - Read the [Custom Distributed Runtime guide](pysml/docs/ddp.md) for communicator setup, partition planning, and the `PipelineParallel` / `DataParallel` workflow.
@@ -138,4 +147,4 @@ Issues and pull requests are welcome! Please describe the backend(s) you tested,
 Built with ❤️ by S.H.I.E.L.D.
 
 Advancing AI Research Through Hardware-Agnostic Innovation
-PySML v0.5.3
+PySML v1.0.0
