@@ -22,12 +22,38 @@ else:
 
 precision_map = {"fp32": "float32", "fp16": "float16", "bf16": "float16"}
 precision = precision_map
-def convert(data, dtype, device=None):
+
+def convert(data, dtype, device=None, shape=None):
     if hasattr(dtype, 'precision') or hasattr(dtype, 'precission'):
         dtype_key = getattr(dtype, 'precision', getattr(dtype, 'precission', None))
         pres = precision_map[dtype_key]
     else:
         pres = dtype
+
+    if AVAILABLE:
+        try:
+            from cupy.cuda import memory as _memory
+        except Exception:
+            _memory = None
+
+        if _memory is not None and isinstance(data, _memory.MemoryPointer):
+            resolved_shape = shape
+            if resolved_shape is None:
+                try:
+                    itemsize = cp.dtype(pres).itemsize
+                    resolved_shape = (data.mem.size // itemsize,)
+                except Exception:
+                    resolved_shape = None
+
+            if resolved_shape is not None:
+                device_ctx = None
+                if device is not None and "cuda" in str(device):
+                    device_ctx = int(str(device).split(":")[1])
+
+                with cp.cuda.Device(device_ctx) if device_ctx is not None else cp.cuda.Device():
+                    view = cp.ndarray(resolved_shape, dtype=pres, memptr=data)
+                    return cp.array(view, dtype=pres)
+
     if device is not None:
         if AVAILABLE and "cuda" in str(device):
             device_id = int(str(device).split(":")[1])
