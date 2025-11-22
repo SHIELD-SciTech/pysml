@@ -1247,9 +1247,6 @@ def backward_split(grad_output, input_ref, **metadata):
                 shared_state = metadata.get('shared_state', {})
 
                 grad_data = shared_state.get('buffer')
-                if grad_data is None:
-                        grad_data = backend.zeros_like(input_tensor.data)
-                        shared_state['buffer'] = grad_data
 
                 if isinstance(grad_output, (list, tuple)):
                         for idx, g in enumerate(grad_output):
@@ -1294,12 +1291,6 @@ def backward_split(grad_output, input_ref, **metadata):
                 grads.append(None)
 
         return grads
-
-		grads.append((input_tensor, grad_tensor))
-	else:
-		grads.append(None)
-
-	return grads
 
 def backward_max_reduce(grad_output, input_ref, **metadata):
         """
