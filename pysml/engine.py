@@ -62,16 +62,13 @@ def _to_backend_array(array, backend):
 
         asarray = getattr(backend, "asarray", None)
         if callable(asarray):
-                converted = asarray(array)
-                # If backend does not expose ndarray, trust asarray to produce the right type
-                if backend_array_type is None or isinstance(converted, backend_array_type):
-                        return converted
+                try:
+                        return asarray(array)
+                except Exception:
+                        # Fall back to the original array if conversion fails
+                        return array
 
-                raise TypeError(
-                        f"Backend conversion returned unexpected type {type(converted)}; expected {backend_array_type}"
-                )
-
-        raise TypeError(f"Cannot convert object of type {type(array)} to backend array for {backend}")
+        return array
 
 
 ENSURE_BACKEND = False

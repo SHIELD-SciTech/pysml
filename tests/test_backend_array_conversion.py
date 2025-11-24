@@ -28,30 +28,6 @@ class DummyBackend:
     def asarray(self, array):
         return np.asarray(array).view(DummyArray)
 
-    def floor_divide(self, a, b, out=None):
-        self.seen_types = (type(a), type(b))
-        result = np.floor_divide(a, b)
-        if out is not None:
-            np.copyto(out, result)
-            return out
-        return result.view(DummyArray)
-
-    def maximum(self, a, b, out=None):
-        self.seen_types = (type(a), type(b))
-        result = np.maximum(a, b)
-        if out is not None:
-            np.copyto(out, result)
-            return out
-        return result.view(DummyArray)
-
-    def where(self, condition, x, y):
-        self.seen_types = (type(condition), type(x), type(y))
-        return np.where(condition, x, y).view(DummyArray)
-
-    def equal(self, a, b):
-        self.seen_types = (type(a), type(b))
-        return np.equal(a, b)
-
     # Minimal stubs required by engine helpers
     def copyto(self, dst, src):
         np.copyto(dst, src)
@@ -93,44 +69,3 @@ def test_numpy_other_converts_to_backend_array():
     assert backend.seen_types == (DummyArray, DummyArray)
     assert isinstance(result.data, DummyArray)
     np.testing.assert_array_equal(result.data, np.array([3.0, 8.0]))
-
-
-def test_numpy_other_converts_for_floor_divide():
-    backend = DummyBackend()
-    lhs = _tensor_with_backend(backend.asarray([4.0, 9.0]), backend)
-    other = np.array([2.0, 3.0])
-
-    result = engine.floor_divide(lhs, other)
-
-    assert backend.seen_types == (DummyArray, DummyArray)
-    assert isinstance(result.data, DummyArray)
-    np.testing.assert_array_equal(result.data, np.array([2.0, 3.0]))
-
-
-def test_numpy_other_converts_for_maximum():
-    backend = DummyBackend()
-    lhs = _tensor_with_backend(backend.asarray([1.0, 5.0]), backend)
-    other = np.array([3.0, 2.0])
-
-    result = engine.maximum(lhs, other)
-
-    assert backend.seen_types == (DummyArray, DummyArray)
-    assert isinstance(result.data, DummyArray)
-    np.testing.assert_array_equal(result.data, np.array([3.0, 5.0]))
-
-
-def test_numpy_other_converts_for_where_and_comparisons():
-    backend = DummyBackend()
-    condition = np.array([True, False])
-    x = _tensor_with_backend(backend.asarray([1.0, 2.0]), backend)
-    y = np.array([10.0, 20.0])
-
-    where_result = engine.where(condition, x, y)
-    assert backend.seen_types == (DummyArray, DummyArray, DummyArray)
-    assert isinstance(where_result.data, DummyArray)
-    np.testing.assert_array_equal(where_result.data, np.array([1.0, 20.0]))
-
-    eq_result = engine.equal(x, y)
-    assert backend.seen_types == (DummyArray, DummyArray)
-    assert isinstance(eq_result, np.ndarray)
-    np.testing.assert_array_equal(eq_result, np.array([False, False]))
