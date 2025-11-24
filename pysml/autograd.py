@@ -1190,6 +1190,8 @@ def backward_embedding(grad_output, input_ref, **metadata):
                         indices_data = indices
 
                 indices_array = backend.asarray(indices_data)
+                if getattr(indices_array.dtype, "kind", "f") not in ("i", "u"):
+                        indices_array = backend.astype(indices_array, backend.int64)
 
                 backend.scatter_add(
                         grad.data,
