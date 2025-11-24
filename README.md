@@ -1,6 +1,6 @@
 # PySML
 
-PySML (Python Strategic Hardware-Independent Learning) is a research-grade deep learning framework that mirrors the ergonomics of PyTorch while targeting CPU, NVIDIA CUDA, and Intel XPU from a single codebase. The library emphasizes explicit control over tensors, modules, and device placement so experimenters can prototype new architectures without juggling backend-specific forks. The v1.0 release locks in a stable API surface, refreshed documentation, and an expanded example gallery that covers text, audio, and vision workloads on every supported backend.
+PySML (Python S.H.I.E.L.D. Machine Learning Framework) is a research-grade deep learning framework that mirrors the ergonomics of PyTorch while targeting CPU, NVIDIA CUDA, and Intel XPU from a single codebase. The library emphasizes explicit control over tensors, modules, and device placement so experimenters can prototype new architectures without juggling backend-specific forks. The v1.0 release locks in a stable API surface, refreshed documentation, and an expanded example gallery that covers text, audio, and vision workloads on every supported backend.
 
 ## Project Highlights
 - **Unified tensor core** – `pysml.tensor.Tensor` centralizes device-aware storage, gradient tracking, and dtype conversions while exposing familiar helpers such as `.to()`, `.cuda()`, and `.backward()`.
