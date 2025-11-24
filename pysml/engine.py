@@ -49,6 +49,31 @@ def _normalize_index(index):
         return index
 
 
+def _to_backend_array(array, backend):
+        """Convert numpy/host arrays to the target backend's array type when possible."""
+
+        # Fast path for scalars or already matching backend arrays
+        if isinstance(array, (bool, int, float, complex)):
+                return array
+
+        backend_array_type = getattr(backend, "ndarray", None)
+        if backend_array_type is not None and isinstance(array, backend_array_type):
+                return array
+
+        asarray = getattr(backend, "asarray", None)
+        if callable(asarray):
+                converted = asarray(array)
+                # If backend does not expose ndarray, trust asarray to produce the right type
+                if backend_array_type is None or isinstance(converted, backend_array_type):
+                        return converted
+
+                raise TypeError(
+                        f"Backend conversion returned unexpected type {type(converted)}; expected {backend_array_type}"
+                )
+
+        raise TypeError(f"Cannot convert object of type {type(array)} to backend array for {backend}")
+
+
 ENSURE_BACKEND = False
 
 
@@ -115,9 +140,10 @@ def add(input, other, alpha=1, out=None):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(other, '_backend'):
                 backend = _backend(input, other)
-        
+
         other_data = other.data if hasattr(other, 'data') else other
-        
+        other_data = _to_backend_array(other_data, backend)
+
         # Handle alpha scaling
         if alpha != 1:
                 other_data = backend.multiply(other_data, alpha)
@@ -142,8 +168,9 @@ def subtract(input, other, out=None):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(other, '_backend'):
                 backend = _backend(input, other)
-        
+
         other_data = other.data if hasattr(other, 'data') else other
+        other_data = _to_backend_array(other_data, backend)
 
         if out is None:
                 buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
@@ -168,6 +195,7 @@ def multiply(input, other, out=None):
                 backend = _backend(input, other)
 
         other_data = other.data if hasattr(other, 'data') else other
+        other_data = _to_backend_array(other_data, backend)
         is_scalar = not hasattr(other, 'data')
 
         if out is None:
@@ -195,8 +223,9 @@ def divide(input, other, out=None):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(other, '_backend'):
                 backend = _backend(input, other)
-        
+
         other_data = other.data if hasattr(other, 'data') else other
+        other_data = _to_backend_array(other_data, backend)
         is_scalar = not hasattr(other, 'data')
 
         if out is None:
@@ -224,8 +253,9 @@ def power(input, exponent, out=None):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(exponent, '_backend'):
                 backend = _backend(input, exponent)
-        
+
         exponent_data = exponent.data if hasattr(exponent, 'data') else exponent
+        exponent_data = _to_backend_array(exponent_data, backend)
         exponent_value = float(exponent_data) if not hasattr(exponent_data, '__len__') else exponent_data
 
         if out is None:
@@ -748,8 +778,9 @@ def floor_divide(input, other, out=None):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(other, '_backend'):
                 backend = _backend(input, other)
-        
+
         other_data = other.data if hasattr(other, 'data') else other
+        other_data = _to_backend_array(other_data, backend)
         
         if out is None:
                 result_data = backend.floor_divide(input.data, other_data)
@@ -772,8 +803,9 @@ def remainder(input, other, out=None):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(other, '_backend'):
                 backend = _backend(input, other)
-        
+
         other_data = other.data if hasattr(other, 'data') else other
+        other_data = _to_backend_array(other_data, backend)
         
         if out is None:
                 result_data = backend.remainder(input.data, other_data)
@@ -796,8 +828,9 @@ def mod(input, other, out=None):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(other, '_backend'):
                 backend = _backend(input, other)
-        
+
         other_data = other.data if hasattr(other, 'data') else other
+        other_data = _to_backend_array(other_data, backend)
         
         if out is None:
                 result_data = backend.mod(input.data, other_data)
@@ -1127,8 +1160,9 @@ def maximum(input, other, out=None):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(other, '_backend'):
                 backend = _backend(input, other)
-        
+
         other_data = other.data if hasattr(other, 'data') else other
+        other_data = _to_backend_array(other_data, backend)
         
         if out is None:
                 result_data = backend.maximum(input.data, other_data)
@@ -1151,8 +1185,9 @@ def minimum(input, other, out=None):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(other, '_backend'):
                 backend = _backend(input, other)
-        
+
         other_data = other.data if hasattr(other, 'data') else other
+        other_data = _to_backend_array(other_data, backend)
         
         if out is None:
                 result_data = backend.minimum(input.data, other_data)
@@ -1195,16 +1230,19 @@ def where(condition, x, y):
         # Get backend from first tensor-like argument
         if hasattr(condition, '_backend'):
                 backend = condition._backend
-                condition_data = condition.data
+                condition_data = _to_backend_array(condition.data, backend)
         elif hasattr(x, '_backend'):
                 backend = x._backend
-                condition_data = condition
+                condition_data = _to_backend_array(condition, backend)
         else:
                 backend = y._backend
-                condition_data = condition
-        
+                condition_data = _to_backend_array(condition, backend)
+
         x_data = x.data if hasattr(x, 'data') else x
         y_data = y.data if hasattr(y, 'data') else y
+
+        x_data = _to_backend_array(x_data, backend)
+        y_data = _to_backend_array(y_data, backend)
         
         result_data = backend.where(condition_data, x_data, y_data)
         
@@ -1230,8 +1268,9 @@ def equal(input, other):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(other, '_backend'):
                 backend = _backend(input, other)
-        
+
         other_data = other.data if hasattr(other, 'data') else other
+        other_data = _to_backend_array(other_data, backend)
         result = backend.equal(input.data, other_data)
         return result
 
@@ -1240,8 +1279,9 @@ def greater(input, other):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(other, '_backend'):
                 backend = _backend(input, other)
-        
+
         other_data = other.data if hasattr(other, 'data') else other
+        other_data = _to_backend_array(other_data, backend)
         result = backend.greater(input.data, other_data)
         return result
 
@@ -1250,8 +1290,9 @@ def less(input, other):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(other, '_backend'):
                 backend = _backend(input, other)
-        
+
         other_data = other.data if hasattr(other, 'data') else other
+        other_data = _to_backend_array(other_data, backend)
         result = backend.less(input.data, other_data)
         return result
 
@@ -1549,10 +1590,14 @@ def dropout(input, p=0.5, training=True, out=None):
 
 def embedding(weight, indices, padding_idx=None):
         backend = weight._backend
-        
-        indices_data = indices.data if hasattr(indices, 'data') else indices
-        result_data = backend.embedding_lookup(weight.data, indices_data, padding_idx)
-        
+
+        raw_indices = indices.data if hasattr(indices, "data") else indices
+        indices_array = backend.asarray(raw_indices)
+        if getattr(indices_array.dtype, "kind", "f") not in ("i", "u"):
+                indices_array = backend.astype(indices_array, backend.int64)
+
+        result_data = backend.embedding_lookup(weight.data, indices_array, padding_idx)
+
         out = Tensor.__new__(Tensor)
         out._requires_grad = weight._requires_grad
         out._grad = None
@@ -1561,13 +1606,14 @@ def embedding(weight, indices, padding_idx=None):
         out.device = weight.device
         out.active_device = weight.active_device
         out.data = result_data
-        
+
         if is_grad_enabled() and out._requires_grad:
                 out._grad_fn = Function(
-                        backward_embedding, [weight],
-                        metadata={'indices': indices_data, 'num_embeddings': weight.shape[0]}
+                        backward_embedding,
+                        [weight],
+                        metadata={"indices": indices_array, "num_embeddings": weight.shape[0]},
                 )
-        
+
         return out
 
 
