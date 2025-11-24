@@ -413,12 +413,16 @@ def dropout(x, p=0.5, training=True):
 
 
 def embedding_lookup(table, indices, padding_idx=None):
-    result = table[indices]  # Often a view, not a copy
-    
+    idx = np.asarray(indices)
+    if getattr(idx.dtype, "kind", "f") not in ("i", "u"):
+        idx = idx.astype(np.int64)
+
+    result = table[idx]  # Often a view, not a copy
+
     if padding_idx is not None:
-        mask = indices == padding_idx
+        mask = idx == padding_idx
         result[mask] = 0  # In-place masking
-    
+
     return result
 
 
