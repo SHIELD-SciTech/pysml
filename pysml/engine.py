@@ -49,6 +49,28 @@ def _normalize_index(index):
         return index
 
 
+def _to_backend_array(array, backend):
+        """Convert numpy/host arrays to the target backend's array type when possible."""
+
+        # Fast path for scalars or already matching backend arrays
+        if isinstance(array, (bool, int, float, complex)):
+                return array
+
+        backend_array_type = getattr(backend, "ndarray", None)
+        if backend_array_type is not None and isinstance(array, backend_array_type):
+                return array
+
+        asarray = getattr(backend, "asarray", None)
+        if callable(asarray):
+                try:
+                        return asarray(array)
+                except Exception:
+                        # Fall back to the original array if conversion fails
+                        return array
+
+        return array
+
+
 ENSURE_BACKEND = False
 
 
@@ -115,9 +137,10 @@ def add(input, other, alpha=1, out=None):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(other, '_backend'):
                 backend = _backend(input, other)
-        
+
         other_data = other.data if hasattr(other, 'data') else other
-        
+        other_data = _to_backend_array(other_data, backend)
+
         # Handle alpha scaling
         if alpha != 1:
                 other_data = backend.multiply(other_data, alpha)
@@ -142,8 +165,9 @@ def subtract(input, other, out=None):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(other, '_backend'):
                 backend = _backend(input, other)
-        
+
         other_data = other.data if hasattr(other, 'data') else other
+        other_data = _to_backend_array(other_data, backend)
 
         if out is None:
                 buffer = _maybe_allocate_buffer(input.data.shape, input._dtype, backend, input.device)
@@ -168,6 +192,7 @@ def multiply(input, other, out=None):
                 backend = _backend(input, other)
 
         other_data = other.data if hasattr(other, 'data') else other
+        other_data = _to_backend_array(other_data, backend)
         is_scalar = not hasattr(other, 'data')
 
         if out is None:
@@ -195,8 +220,9 @@ def divide(input, other, out=None):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(other, '_backend'):
                 backend = _backend(input, other)
-        
+
         other_data = other.data if hasattr(other, 'data') else other
+        other_data = _to_backend_array(other_data, backend)
         is_scalar = not hasattr(other, 'data')
 
         if out is None:
@@ -224,8 +250,9 @@ def power(input, exponent, out=None):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(exponent, '_backend'):
                 backend = _backend(input, exponent)
-        
+
         exponent_data = exponent.data if hasattr(exponent, 'data') else exponent
+        exponent_data = _to_backend_array(exponent_data, backend)
         exponent_value = float(exponent_data) if not hasattr(exponent_data, '__len__') else exponent_data
 
         if out is None:
@@ -1549,10 +1576,14 @@ def dropout(input, p=0.5, training=True, out=None):
 
 def embedding(weight, indices, padding_idx=None):
         backend = weight._backend
-        
-        indices_data = indices.data if hasattr(indices, 'data') else indices
-        result_data = backend.embedding_lookup(weight.data, indices_data, padding_idx)
-        
+
+        raw_indices = indices.data if hasattr(indices, "data") else indices
+        indices_array = backend.asarray(raw_indices)
+        if getattr(indices_array.dtype, "kind", "f") not in ("i", "u"):
+                indices_array = backend.astype(indices_array, backend.int64)
+
+        result_data = backend.embedding_lookup(weight.data, indices_array, padding_idx)
+
         out = Tensor.__new__(Tensor)
         out._requires_grad = weight._requires_grad
         out._grad = None
@@ -1561,13 +1592,14 @@ def embedding(weight, indices, padding_idx=None):
         out.device = weight.device
         out.active_device = weight.active_device
         out.data = result_data
-        
+
         if is_grad_enabled() and out._requires_grad:
                 out._grad_fn = Function(
-                        backward_embedding, [weight],
-                        metadata={'indices': indices_data, 'num_embeddings': weight.shape[0]}
+                        backward_embedding,
+                        [weight],
+                        metadata={"indices": indices_array, "num_embeddings": weight.shape[0]},
                 )
-        
+
         return out
 
 
