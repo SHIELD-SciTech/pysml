@@ -775,8 +775,9 @@ def floor_divide(input, other, out=None):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(other, '_backend'):
                 backend = _backend(input, other)
-        
+
         other_data = other.data if hasattr(other, 'data') else other
+        other_data = _to_backend_array(other_data, backend)
         
         if out is None:
                 result_data = backend.floor_divide(input.data, other_data)
@@ -799,8 +800,9 @@ def remainder(input, other, out=None):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(other, '_backend'):
                 backend = _backend(input, other)
-        
+
         other_data = other.data if hasattr(other, 'data') else other
+        other_data = _to_backend_array(other_data, backend)
         
         if out is None:
                 result_data = backend.remainder(input.data, other_data)
@@ -823,8 +825,9 @@ def mod(input, other, out=None):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(other, '_backend'):
                 backend = _backend(input, other)
-        
+
         other_data = other.data if hasattr(other, 'data') else other
+        other_data = _to_backend_array(other_data, backend)
         
         if out is None:
                 result_data = backend.mod(input.data, other_data)
@@ -1154,8 +1157,9 @@ def maximum(input, other, out=None):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(other, '_backend'):
                 backend = _backend(input, other)
-        
+
         other_data = other.data if hasattr(other, 'data') else other
+        other_data = _to_backend_array(other_data, backend)
         
         if out is None:
                 result_data = backend.maximum(input.data, other_data)
@@ -1178,8 +1182,9 @@ def minimum(input, other, out=None):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(other, '_backend'):
                 backend = _backend(input, other)
-        
+
         other_data = other.data if hasattr(other, 'data') else other
+        other_data = _to_backend_array(other_data, backend)
         
         if out is None:
                 result_data = backend.minimum(input.data, other_data)
@@ -1222,16 +1227,19 @@ def where(condition, x, y):
         # Get backend from first tensor-like argument
         if hasattr(condition, '_backend'):
                 backend = condition._backend
-                condition_data = condition.data
+                condition_data = _to_backend_array(condition.data, backend)
         elif hasattr(x, '_backend'):
                 backend = x._backend
-                condition_data = condition
+                condition_data = _to_backend_array(condition, backend)
         else:
                 backend = y._backend
-                condition_data = condition
-        
+                condition_data = _to_backend_array(condition, backend)
+
         x_data = x.data if hasattr(x, 'data') else x
         y_data = y.data if hasattr(y, 'data') else y
+
+        x_data = _to_backend_array(x_data, backend)
+        y_data = _to_backend_array(y_data, backend)
         
         result_data = backend.where(condition_data, x_data, y_data)
         
@@ -1257,8 +1265,9 @@ def equal(input, other):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(other, '_backend'):
                 backend = _backend(input, other)
-        
+
         other_data = other.data if hasattr(other, 'data') else other
+        other_data = _to_backend_array(other_data, backend)
         result = backend.equal(input.data, other_data)
         return result
 
@@ -1267,8 +1276,9 @@ def greater(input, other):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(other, '_backend'):
                 backend = _backend(input, other)
-        
+
         other_data = other.data if hasattr(other, 'data') else other
+        other_data = _to_backend_array(other_data, backend)
         result = backend.greater(input.data, other_data)
         return result
 
@@ -1277,8 +1287,9 @@ def less(input, other):
         backend = input._backend
         if ENSURE_BACKEND and hasattr(other, '_backend'):
                 backend = _backend(input, other)
-        
+
         other_data = other.data if hasattr(other, 'data') else other
+        other_data = _to_backend_array(other_data, backend)
         result = backend.less(input.data, other_data)
         return result
 
