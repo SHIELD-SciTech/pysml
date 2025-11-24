@@ -1549,10 +1549,14 @@ def dropout(input, p=0.5, training=True, out=None):
 
 def embedding(weight, indices, padding_idx=None):
         backend = weight._backend
-        
-        indices_data = indices.data if hasattr(indices, 'data') else indices
-        result_data = backend.embedding_lookup(weight.data, indices_data, padding_idx)
-        
+
+        raw_indices = indices.data if hasattr(indices, "data") else indices
+        indices_array = backend.asarray(raw_indices)
+        if getattr(indices_array.dtype, "kind", "f") not in ("i", "u"):
+                indices_array = backend.astype(indices_array, backend.int64)
+
+        result_data = backend.embedding_lookup(weight.data, indices_array, padding_idx)
+
         out = Tensor.__new__(Tensor)
         out._requires_grad = weight._requires_grad
         out._grad = None
@@ -1561,13 +1565,14 @@ def embedding(weight, indices, padding_idx=None):
         out.device = weight.device
         out.active_device = weight.active_device
         out.data = result_data
-        
+
         if is_grad_enabled() and out._requires_grad:
                 out._grad_fn = Function(
-                        backward_embedding, [weight],
-                        metadata={'indices': indices_data, 'num_embeddings': weight.shape[0]}
+                        backward_embedding,
+                        [weight],
+                        metadata={"indices": indices_array, "num_embeddings": weight.shape[0]},
                 )
-        
+
         return out
 
 

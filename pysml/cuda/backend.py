@@ -459,12 +459,16 @@ def dropout(x, p=0.5, training=True):
 
 
 def embedding_lookup(table, indices, padding_idx=None):
-    result = table[indices]  # GPU indexing kernel
-    
+    idx = cp.asarray(indices)
+    if getattr(idx.dtype, "kind", "f") not in ("i", "u"):
+        idx = idx.astype(cp.int64)
+
+    result = table[idx]  # GPU indexing kernel
+
     if padding_idx is not None:
-        mask = indices == padding_idx
+        mask = idx == padding_idx
         result[mask] = 0  # In-place GPU masking
-    
+
     return result
 
 
