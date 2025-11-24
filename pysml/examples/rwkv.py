@@ -68,12 +68,12 @@ class TinyRWKVBlock(Module):
         decay = np.full((hidden_size,), 0.5, dtype=np.float32)
         self.register_buffer("time_decay", Tensor(decay, requires_grad=False))
 
-    def init_state(self, batch_size: int):
+    def init_state(self, batch_size: int, device: str = "cpu"):
         zeros = np.zeros((batch_size, self.hidden_size), dtype=np.float32)
         state = {
-            "avg_key": Tensor(zeros, requires_grad=False),
-            "avg_value": Tensor(zeros, requires_grad=False),
-            "output": Tensor(zeros, requires_grad=False),
+            "avg_key": Tensor(zeros, requires_grad=False, device=device),
+            "avg_value": Tensor(zeros, requires_grad=False, device=device),
+            "output": Tensor(zeros, requires_grad=False, device=device),
         }
         return state
 
@@ -117,7 +117,7 @@ class TinyRWKVModel(Module):
     def forward(self, tokens: Tensor) -> Tensor:
         x = self.embedding(tokens)
         batch_size = x.shape[0]
-        states = [block.init_state(batch_size) for block in self.blocks]
+        states = [block.init_state(batch_size, device=x.active_device) for block in self.blocks]
 
         steps = pysml.split(x, 1, dim=1)
         last = None
@@ -146,7 +146,7 @@ class RWKVBlockStack(Module):
 
     def forward(self, hidden: Tensor) -> Tensor:
         batch_size = hidden.shape[0]
-        states = [block.init_state(batch_size) for block in self.blocks]
+        states = [block.init_state(batch_size, device=hidden.active_device) for block in self.blocks]
         steps = pysml.split(hidden, 1, dim=1)
         outputs = []
         for step in steps:
