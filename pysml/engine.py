@@ -83,7 +83,13 @@ def _maybe_allocate_buffer(shape, dtype, backend, device):
         if getattr(backend, "BACKEND_NAME", None) == "cpu":
                 return None
         try:
-                return _BUFFER_POOL.get_buffer(shape, dtype, backend, device)
+                buffer = _BUFFER_POOL.get_buffer(shape, dtype, backend, device)
+                if buffer is not None:
+                        if isinstance(buffer, memoryview):
+                                return None
+                        if hasattr(buffer, 'flags') and not buffer.flags.writeable:
+                                return None
+                return buffer
         except Exception:
                 return None
 

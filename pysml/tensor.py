@@ -655,7 +655,13 @@ def _request_buffer(shape, dtype, backend, device):
     if getattr(backend, "BACKEND_NAME", None) == "cpu":
         return None
     try:
-        return get_buffer_pool().get_buffer(shape, dtype, backend, device)
+        buffer = get_buffer_pool().get_buffer(shape, dtype, backend, device)
+        if buffer is not None:
+            if isinstance(buffer, memoryview):
+                return None
+            if hasattr(buffer, 'flags') and not buffer.flags.writeable:
+                return None
+        return buffer
     except Exception:
         return None
 

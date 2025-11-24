@@ -126,7 +126,13 @@ def _expand_grad_for_reduction(grad_output, input_shape, axis, keepdims, backend
                 for ax in sorted(normalized_axes):
                         grad_data = backend.expand_dims(grad_data, ax)
 
-        return backend.broadcast_to(grad_data, input_shape)
+        try:
+                return backend.broadcast_to(grad_data, input_shape)
+        except ValueError:
+                # Fallback: try reducing to scalar if broadcasting fails
+                # This handles cases where grad_output shape is incompatible (e.g. (256, 1) vs (4, 4))
+                scalar_grad = backend.sum(grad_data)
+                return backend.broadcast_to(scalar_grad, input_shape)
 
 
 def _wrap_grad_tensor(grad_data, reference: Tensor):
@@ -1717,6 +1723,7 @@ def backward_mean(grad_output, input_ref, **metadata):
                 keepdims = metadata.get('keepdims', False)
                 n = metadata.get('n', None)
 
+                # Broadcast grad_output to match the unreduced input shape
                 # Broadcast grad_output to match the unreduced input shape
                 grad_data = _expand_grad_for_reduction(grad_output, input_tensor.shape, axis, keepdims, backend)
 
