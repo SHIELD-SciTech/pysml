@@ -219,7 +219,9 @@ full_like = cp.full_like
 asarray = cp.asarray
 copy = cp.copy
 def copyto(dst, src):
-    cp.copyto(dst, src)
+    dst_arr = cp.asarray(dst)
+    src_arr = cp.asarray(src)
+    cp.copyto(dst_arr, src_arr)
 asnumpy = cp.asnumpy if AVAILABLE else cp.asarray
 
 float32 = cp.float32
