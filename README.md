@@ -39,7 +39,7 @@ pip install numpy
 - **NVIDIA CUDA** – `pip install cupy-cuda11x` or `cupy-cuda12x` (matching your driver toolkit)
 - **Intel XPU** – `pip install dpnp dpctl` (consider Intel's `-i https://software.repos.intel.com/python/pypi` mirror for faster wheels)
 
-**Intel XPU Download Example:** pip install -i https://software.repos.intel.com/python/pypi numpy scipy dpnp dpctl tbb4py (`https://www.intel.com/content/www/us/en/developer/tools/oneapi/distribution-python-download.html?install-type=pip&python-pip=python-3_12&operatingsystem-pip=linux&packagetype-pip=idp-allcomponents`)
+**Intel XPU Download Example:** `pip install -i https://software.repos.intel.com/python/pypi numpy scipy dpnp dpctl tbb4py` (`https://www.intel.com/content/www/us/en/developer/tools/oneapi/distribution-python-download.html?install-type=pip&python-pip=python-3_12&operatingsystem-pip=linux&packagetype-pip=idp-allcomponents`)
 
 ### From Source
 ```bash
