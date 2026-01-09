@@ -1,140 +1,133 @@
-# PySML
+# PySML — Python SHIELD Machine Learning Framework
 
-PySML (Python Strategic Hardware-Independent Learning) is a research-grade deep learning framework that mirrors the ergonomics of PyTorch while targeting CPU, NVIDIA CUDA, and Intel XPU from a single codebase. The library emphasizes explicit control over tensors, modules, and device placement so experimenters can prototype new architectures without juggling backend-specific forks.
+PySML is S.H.I.E.L.D. AI’s research-grade deep learning framework for fast, transparent model development. It mirrors PyTorch ergonomics while giving explicit control over tensors, devices, and distributed execution across CPU, NVIDIA CUDA, and Intel XPU from a single codebase.
 
-## Project Highlights
-- **Unified tensor core** – `pysml.tensor.Tensor` centralizes device-aware storage, gradient tracking, and dtype conversions while exposing familiar helpers such as `.to()`, `.cuda()`, and `.backward()`.
-- **Composable autograd** – A minimal `Function` graph records backward closures for every op registered in `pysml.engine`, enabling custom differentiable primitives without boilerplate.
-- **Backend dispatch** – CPU (NumPy), CUDA (CuPy), and Intel XPU (dpnp/dpctl) backends share a common operator surface and can be toggled at runtime.
-- **PyTorch-inspired modules** – `pysml.nn` ships parameters, buffers, optimizers, attention layers, and Transformer building blocks ready for research-scale experiments.
-- **Custom distributed runtime** – `pysml.ddp` provides pipeline/data parallel wrappers and pure-Python communication primitives so you can rehearse heterogeneous launches without `torch.distributed`.
-- **First-party utilities** – Checkpointing, model-size reporting, memory pooling, and computation-graph visualization streamline day-to-day experimentation.
+> Internal-first: PySML is maintained for S.H.I.E.L.D. AI projects. External use is allowed only with prior permission.
 
-> Personal note: The rewrite that unified attention, normalization, and optimizer utilities finally made it possible to port my Transformer notebooks between laptop CPU runs and datacenter GPUs without changing a line of model code.
-
-## Repository Map
-```
-pysml/
-├── tensor.py          # Tensor implementation and autograd integration
-├── engine.py          # Backend-aware operator dispatch
-├── autograd.py        # Function graph and backward kernels
-├── nn/                # Module base class, layers, optimizers, attention blocks
-├── save_load.py       # Checkpointing and model-size helpers
-├── memory_pool.py     # Device/dtype aware buffer pooling
-├── utils.py           # Graph tracing helpers
-└── docs/              # Detailed API and subsystem documentation
-```
+## Why PySML
+- One stack, three backends: NumPy (CPU), CuPy (CUDA), and dpnp/dpctl (XPU) with runtime dispatch.
+- Minimal, transparent autograd: each op records its backward closure; easy to add custom differentiable primitives.
+- PyTorch-like modules: familiar `Module`/`Parameter`, layers, losses, optimizers, and LR schedulers.
+- Distributed without torch.distributed: pure-Python data, pipeline, and hybrid parallel for heterogeneous clusters.
+- RWKV-ready: reference RWKV implementations (including an 80M chatbot) for text-generation research.
+- Checkpointing helpers: save/load tensors, state_dicts, and distributed strategy metadata.
 
 ## Installation
-### Python Requirements
-- Python 3.8+
-- NumPy 1.20 or newer
+Requirements: Python 3.8+, NumPy 1.20+
 
-### CPU-Only Setup
+CPU only:
 ```bash
 pip install numpy
 ```
 
-### Optional GPU Backends
-- **NVIDIA CUDA** – `pip install cupy-cuda11x` or `cupy-cuda12x` (matching your driver toolkit)
-- **Intel XPU** – `pip install dpnp dpctl` (consider Intel's `-i https://software.repos.intel.com/python/pypi` mirror for faster wheels)
+CUDA:
+```bash
+pip install cupy-cuda11x  # or cupy-cuda12x
+```
 
-### From Source
+Intel XPU:
+```bash
+pip install dpnp dpctl
+```
+
+From source:
 ```bash
 git clone https://github.com/SHIELD-SciTech/pysml.git
 cd pysml
-python -m pip install -e .
+pip install -e .
+python -c "import pysml; print('PySML', pysml.__version__)"
 ```
 
-After installation you can verify backend availability:
-```bash
-python -c "import pysml; print('PySML', pysml.__version__); print('CUDA:', pysml.cuda.is_available()); print('XPU:', pysml.xpu.is_available())"
-```
-
-> Personal note: When Intel's drivers complain, I check that oneAPI is on `PATH` **and** that Secure Boot isn't blocking kernel modules—solves 90% of setup hiccups.
-
-## QuickStart
-### 1. Create and manipulate tensors
+## Quick Start
 ```python
 import pysml
+from pysml import Tensor, nn, optim
+import pysml.dtype as dtype
 
-a = pysml.Tensor([[1, 2], [3, 4]])
-b = pysml.Tensor([[4, 3], [2, 1]])
-print(pysml.add(a, b))
-```
-
-### 2. Run a gradient pass
-```python
-import pysml
-
-x = pysml.Tensor([[1.0, 2.0]], requires_grad=True)
-w = pysml.Tensor([[3.0], [4.0]], requires_grad=True)
-logits = pysml.matmul(x, w)
-loss = pysml.mean(logits)
+# Tensors + autograd
+x = Tensor([[1., 2.]], dtype=dtype.fp32(), requires_grad=True)
+w = Tensor([[3.], [4.]], dtype=dtype.fp32(), requires_grad=True)
+y = pysml.matmul(x, w)
+loss = pysml.mean(y)
 loss.backward()
-print('x.grad:', x.grad)
-print('w.grad:', w.grad)
-```
+print("x.grad:", x.grad)
 
-### 3. Train a tiny model
-```python
-import pysml
-from pysml.nn import Linear, Module
-from pysml.nn.optim import AdamW
-
-class Classifier(Module):
-    def __init__(self):
+# Tiny MLP
+class MLP(nn.Module):
+    def __init__(self, d_in, d_hid, d_out):
         super().__init__()
-        self.fc = Linear(8, 2)
+        self.fc1 = nn.Linear(d_in, d_hid)
+        self.fc2 = nn.Linear(d_hid, d_out)
+    def forward(self, x):
+        return self.fc2(pysml.relu(self.fc1(x)))
 
-    def forward(self, inputs):
-        return self.fc(inputs)
-
-model = Classifier()
-optimizer = AdamW(model.parameters(), lr=3e-4)
-inputs = pysml.Tensor([[0.5] * 8])
-targets = pysml.Tensor([[0.0, 1.0]])
-
-for _ in range(10):
-    logits = model(inputs)
-    loss = pysml.mean((logits - targets) ** 2)
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
+model = MLP(10, 64, 2)
+opt = optim.AdamW(model.parameters(), lr=1e-3)
 ```
 
-### 4. Scale out with the custom DDP runtime
+Move to GPU/XPU:
 ```python
-from pysml import ddp
-from pysml.examples.parallel_utils import ExampleConfig
-from pysml.examples.transformer import TinyTransformerClassifier
-
-devices = ["xpu:0", "xpu:1"]  # Works with CUDA or CPU strings as well
-ddp.register_global_communicator(devices)
-
-PipelineModel = ddp.PipelineParallel(
-    TinyTransformerClassifier,
-    devices=devices,
-    chunks=4,
-)
-model = PipelineModel(ExampleConfig())
+x = Tensor([[1., 2.]], dtype=dtype.fp32(), device="cuda")
+x = x.to("cuda:0")      # or "xpu:0"
+x = x.cuda()             # convenience
 ```
-Wrap any sequential module with `PipelineParallel` and optionally nest it inside
-`ddp.DataParallel` for replica-style batching. See the dedicated DDP guide for
-training/inference loops plus RWKV and Transformer launch scripts.
 
-## Learn More
-- Browse the new [`pysml/docs`](pysml/docs/README.md) directory for subsystem guides, API references, and integration tips.
-- Read the [Custom Distributed Runtime guide](pysml/docs/ddp.md) for communicator setup, partition planning, and the `PipelineParallel` / `DataParallel` workflow.
-- Explore `pysml/examples/` for ready-to-run Transformer, RWKV, and diffusion demos.
-- Reuse the XPU-focused [Transformer](pysml/examples/ddp_transformer_xpu.py) and [RWKV](pysml/examples/ddp_rwkv_xpu.py) distributed rehearsal scripts as launch templates for your own models.
-- Experiment with extending `pysml.engine` and `pysml.autograd` to register custom operations alongside built-ins.
+## Core APIs
+- **Tensor** (`pysml.Tensor`): device-aware storage with dtype helpers (`fp32`, `fp16`, `bf16`), cloning, in-place ops, `.to()/.cuda()/.xpu()`, hooks, and backward graph traversal.
+- **Ops** (`pysml.engine`): matmul, add/subtract/multiply/divide, exp/log/sqrt/sin/cos, relu/gelu/silu/sigmoid/tanh, softmax/log_softmax, layer_norm/rms_norm/batch_norm/group_norm, dropout, embedding, reshape/transpose/concatenate/stack/split, reductions (`sum/mean/max/min`), and more.
+- **Modules & layers** (`pysml.nn`): Linear/Bilinear, Conv1d/2d/Transpose, Embedding, MultiheadAttention/ScaledDotProductAttention, norms (LayerNorm, RMSNorm, BatchNorm1d/2d, GroupNorm), activations (ReLU, GELU, SiLU, Sigmoid, Tanh, Softmax, LogSoftmax, LeakyReLU, Mish), pooling (Max/Avg/Adaptive), Dropout/Dropout2d, containers (Sequential, ModuleList, ModuleDict), losses (CrossEntropy, MSE, L1, BCE/BCEWithLogits, NLL, KLDiv, SmoothL1).
+- **Optim & schedulers** (`pysml.optim`): SGD, Adam, AdamW; schedulers StepLR, MultiStepLR, ExponentialLR, CosineAnnealingLR, CosineAnnealingWarmRestarts, LinearLR, ConstantLR, OneCycleLR.
+- **Distributed** (`pysml.ddp`): DDP (data parallel), PipelineParallel with micro-batching and schedules, HybridParallel (data + pipeline), communication backend setup (`init_process_group`, `get_rank`, `barrier`), launch helpers, and samplers.
+- **Serialization** (`pysml.save_load`): save/load tensors or checkpoints; `save_checkpoint`, `load_state_dict`, optional parallel strategy metadata.
 
-> Personal note: I keep a scratchpad that registers experimental ops under `pysml.engine`—once the backward works, porting it into the main dispatcher takes only a few lines.
+## Distributed Example
+```python
+from pysml.ddp import init_process_group, DDP, get_rank, barrier
+from pysml import nn
 
-## Contributing
-Issues and pull requests are welcome! Please describe the backend(s) you tested, include reproduction scripts when filing bugs, and update the docs if you introduce new public APIs.
+init_process_group(rank=rank, world_size=world_size, device_type="cuda", device_id=rank)
+model = nn.Linear(128, 64).cuda()
+model = DDP(model)
+
+# forward/backward as usual; grads sync in backward
+...  # training loop
+barrier()
+```
+
+## RWKV Examples
+```python
+from pysml.examples.rwkv import RWKV, create_rwkv_small
+m = create_rwkv_small(vocab_size=50257, device="cuda")
+print("Params:", m.num_parameters())
+```
+80M chatbot:
+```bash
+cd pysml/examples
+python train_chatbot.py
+```
+
+## Project Layout
+```
+pysml/
+  __init__.py        # Public API surface
+  tensor.py          # Tensor class + grad helpers
+  engine.py          # Ops with autograd wiring
+  autograd.py        # Backward functions/Function graph
+  dtype.py           # fp32/fp16/bf16 dtypes
+  cpu/ cuda/ xpu/    # Backends
+  nn/                # Modules, layers, activations, loss
+  optim/             # Optimizers & LR schedulers
+  ddp/               # Data/pipeline/hybrid parallel
+  examples/          # RWKV + training scripts
+  save_load.py       # Checkpoint utilities
+```
+
+## Status and Use
+- Supported internally by S.H.I.E.L.D. AI ML infrastructure.
+- External use requires prior permission; coordinate with S.H.I.E.L.D. AI before redistribution or integration.
+- Expect API surface to evolve as research needs change.
+
+## License
+MIT License. Built by S.H.I.E.L.D. AI for internal research; external use is granted only with explicit approval.
 
 Built with ❤️ by S.H.I.E.L.D.
-Advancing AI Research Through Hardware-Agnostic Innovation
-PySML v0.5.3
